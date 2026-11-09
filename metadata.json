@@ -1,0 +1,6 @@
+{
+  "name": "EcoCarry",
+  "description": "EcoCarry — Tactile modern campus eco-bag borrowing, tracking, and rewards app for sustainable university life.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

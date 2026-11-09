@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "447501509221",
+    "project_id": "ecosave-34ef8",
+    "storage_bucket": "ecosave-34ef8.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:447501509221:android:1b50a10bbb94e9c2ebdc8c",
+        "android_client_info": {
+          "package_name": "com.apu.greenbag"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyBkJXsjw5SC3Brww0aEa4YoqaHbhZ336Ok"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

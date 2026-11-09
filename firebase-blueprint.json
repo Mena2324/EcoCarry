@@ -1,0 +1,86 @@
+{
+  "entities": {
+    "user": {
+      "title": "UserProfile",
+      "description": "Student or staff profile for APU GreenBag",
+      "type": "object",
+      "properties": {
+        "studentName": { "type": "string", "maxLength": 100 },
+        "studentId": { "type": "string", "maxLength": 50 },
+        "faculty": { "type": "string", "maxLength": 100 },
+        "tier": { "type": "string", "maxLength": 50 },
+        "points": { "type": "number" },
+        "activeStreak": { "type": "number" },
+        "bagsSavedTotal": { "type": "number" },
+        "co2SavedKg": { "type": "number" },
+        "email": { "type": "string", "maxLength": 100 },
+        "updatedAt": { "type": "string" }
+      },
+      "required": ["studentName", "studentId", "email"]
+    },
+    "activeBag": {
+      "title": "ActiveBag",
+      "description": "Borrowed eco-bag active loan record",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "maxLength": 128 },
+        "bagNumber": { "type": "string", "maxLength": 20 },
+        "type": { "type": "string", "maxLength": 50 },
+        "borrowedAt": { "type": "string", "maxLength": 60 },
+        "borrowedStationId": { "type": "string", "maxLength": 50 },
+        "borrowedStationName": { "type": "string", "maxLength": 100 },
+        "dueDate": { "type": "string", "maxLength": 60 },
+        "daysRemaining": { "type": "number" },
+        "status": { "type": "string", "enum": ["active", "warning", "overdue", "returned"] },
+        "co2SavedGrams": { "type": "number" },
+        "qrPayload": { "type": "string", "maxLength": 100 }
+      },
+      "required": ["userId", "bagNumber", "type", "borrowedStationId", "status"]
+    },
+    "activity": {
+      "title": "ActivityLog",
+      "description": "Eco bag borrowing and return timeline activity",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "maxLength": 128 },
+        "action": { "type": "string", "maxLength": 100 },
+        "bagNumber": { "type": "string", "maxLength": 50 },
+        "location": { "type": "string", "maxLength": 100 },
+        "time": { "type": "string", "maxLength": 60 },
+        "type": { "type": "string", "maxLength": 30 }
+      },
+      "required": ["userId", "action", "bagNumber", "time", "type"]
+    },
+    "stamp": {
+      "title": "StampRecord",
+      "description": "Loyalty stamp record on the APU passport",
+      "type": "object",
+      "properties": {
+        "userId": { "type": "string", "maxLength": 128 },
+        "index": { "type": "number" },
+        "isStamped": { "type": "boolean" },
+        "stampedDate": { "type": "string", "maxLength": 50 },
+        "bagRef": { "type": "string", "maxLength": 50 }
+      },
+      "required": ["userId", "index", "isStamped"]
+    }
+  },
+  "firestore": {
+    "/users/{userId}": {
+      "schema": "user",
+      "description": "Individual student or staff profile document"
+    },
+    "/users/{userId}/bags/{bagId}": {
+      "schema": "activeBag",
+      "description": "Active borrowed bags for the user"
+    },
+    "/users/{userId}/activities/{activityId}": {
+      "schema": "activity",
+      "description": "Recent activity logs for the user"
+    },
+    "/users/{userId}/stamps/{stampId}": {
+      "schema": "stamp",
+      "description": "Loyalty stamp slots for the user"
+    }
+  }
+}
