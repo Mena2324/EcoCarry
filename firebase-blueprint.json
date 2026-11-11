@@ -2,7 +2,7 @@
   "entities": {
     "user": {
       "title": "UserProfile",
-      "description": "Student or staff profile for APU GreenBag",
+      "description": "Student or staff profile for APU EcoCarry",
       "type": "object",
       "properties": {
         "studentName": { "type": "string", "maxLength": 100 },
@@ -18,6 +18,24 @@
       },
       "required": ["studentName", "studentId", "email"]
     },
+    "globalBag": {
+      "title": "GlobalBag",
+      "description": "Individual physical reusable bag in campus circulation",
+      "type": "object",
+      "properties": {
+        "bagNumber": { "type": "string", "maxLength": 30 },
+        "type": { "type": "string", "maxLength": 60 },
+        "status": { "type": "string", "enum": ["available", "borrowed", "maintenance"] },
+        "currentBorrowerId": { "type": "string", "maxLength": 128 },
+        "currentBorrowerName": { "type": "string", "maxLength": 100 },
+        "borrowedStationId": { "type": "string", "maxLength": 50 },
+        "borrowedStationName": { "type": "string", "maxLength": 100 },
+        "qrToken": { "type": "string", "maxLength": 128 },
+        "washCount": { "type": "number" },
+        "co2SavedGrams": { "type": "number" }
+      },
+      "required": ["bagNumber", "type", "status", "qrToken"]
+    },
     "activeBag": {
       "title": "ActiveBag",
       "description": "Borrowed eco-bag active loan record",
@@ -29,11 +47,8 @@
         "borrowedAt": { "type": "string", "maxLength": 60 },
         "borrowedStationId": { "type": "string", "maxLength": 50 },
         "borrowedStationName": { "type": "string", "maxLength": 100 },
-        "dueDate": { "type": "string", "maxLength": 60 },
-        "daysRemaining": { "type": "number" },
-        "status": { "type": "string", "enum": ["active", "warning", "overdue", "returned"] },
-        "co2SavedGrams": { "type": "number" },
-        "qrPayload": { "type": "string", "maxLength": 100 }
+        "status": { "type": "string", "enum": ["active", "returned"] },
+        "co2SavedGrams": { "type": "number" }
       },
       "required": ["userId", "bagNumber", "type", "borrowedStationId", "status"]
     },
@@ -49,7 +64,7 @@
         "time": { "type": "string", "maxLength": 60 },
         "type": { "type": "string", "maxLength": 30 }
       },
-      "required": ["userId", "action", "bagNumber", "time", "type"]
+      "required": ["userId", "action", "bagNumber", "type"]
     },
     "stamp": {
       "title": "StampRecord",
@@ -63,9 +78,45 @@
         "bagRef": { "type": "string", "maxLength": 50 }
       },
       "required": ["userId", "index", "isStamped"]
+    },
+    "voucher": {
+      "title": "RewardVoucher",
+      "description": "Single-use reward redemption voucher issued to student",
+      "type": "object",
+      "properties": {
+        "code": { "type": "string", "maxLength": 50 },
+        "rewardId": { "type": "string", "maxLength": 50 },
+        "rewardName": { "type": "string", "maxLength": 100 },
+        "pointsCost": { "type": "number" },
+        "status": { "type": "string", "enum": ["active", "redeemed", "expired"] },
+        "issuedAt": { "type": "string" },
+        "expiresAt": { "type": "string" }
+      },
+      "required": ["code", "rewardId", "pointsCost", "status"]
+    },
+    "campusTotal": {
+      "title": "CampusTotal",
+      "description": "Campus-wide collective environmental impact counters",
+      "type": "object",
+      "properties": {
+        "totalBagsEliminated": { "type": "number" },
+        "co2AvoidedKg": { "type": "number" },
+        "treesEquivalent": { "type": "number" },
+        "monthlyGoal": { "type": "number" },
+        "activeCampusers": { "type": "number" }
+      },
+      "required": ["totalBagsEliminated", "monthlyGoal"]
     }
   },
   "firestore": {
+    "/bags/{bagId}": {
+      "schema": "globalBag",
+      "description": "Global collection of all physical campus EcoCarry bags"
+    },
+    "/campus/{metricId}": {
+      "schema": "campusTotal",
+      "description": "University-wide sustainability impact counters"
+    },
     "/users/{userId}": {
       "schema": "user",
       "description": "Individual student or staff profile document"
@@ -81,6 +132,10 @@
     "/users/{userId}/stamps/{stampId}": {
       "schema": "stamp",
       "description": "Loyalty stamp slots for the user"
+    },
+    "/users/{userId}/vouchers/{voucherId}": {
+      "schema": "voucher",
+      "description": "Single-use reward vouchers redeemed by the student"
     }
   }
 }

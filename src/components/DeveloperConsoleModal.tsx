@@ -37,7 +37,6 @@ export const DeveloperConsoleModal: React.FC = () => {
     firebaseConnected,
     activeBags,
     stations,
-    login,
     resetData,
   } = useGreenBag();
 
@@ -67,13 +66,8 @@ export const DeveloperConsoleModal: React.FC = () => {
   const totalBagsDiverted = devAccounts.reduce((sum, a) => sum + a.bagsSavedTotal, 0);
   const totalCo2Offset = devAccounts.reduce((sum, a) => sum + a.co2SavedKg, 0);
 
-  const handleImpersonateUser = (acc: DevAccount) => {
-    login({
-      studentIdOrEmail: acc.studentId,
-      name: acc.studentName,
-      faculty: acc.faculty,
-    });
-    setIsDevConsoleOpen(false);
+  const handleInspectUser = (acc: DevAccount) => {
+    setSelectedAccountForInspection(acc);
   };
 
   return (
@@ -254,12 +248,12 @@ export const DeveloperConsoleModal: React.FC = () => {
                       </button>
 
                       <button
-                        onClick={() => handleImpersonateUser(account)}
+                        onClick={() => handleInspectUser(account)}
                         className="px-2.5 py-1.5 rounded-lg bg-[#186049] hover:bg-[#004734] text-white text-[11px] font-bold transition-colors flex items-center gap-1"
-                        title="Sign into this account to test their view"
+                        title="Inspect student details"
                       >
                         <UserCheck className="w-3.5 h-3.5" />
-                        <span>Impersonate</span>
+                        <span>Inspect</span>
                       </button>
                     </div>
                   </div>

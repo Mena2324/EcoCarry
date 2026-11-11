@@ -1,15 +1,36 @@
 import React from 'react';
 import { useGreenBag } from '../context/GreenBagContext';
-import { X, ShieldCheck, Sparkles, Leaf, CheckCircle2, User } from 'lucide-react';
+import {
+  X,
+  ShieldCheck,
+  Leaf,
+  CheckCircle2,
+  User,
+  Trash2,
+  Mail,
+  Shield,
+  AlertCircle,
+} from 'lucide-react';
 
 export const StudentPassModal: React.FC = () => {
-  const { isStudentPassOpen, setIsStudentPassOpen, user, logout } = useGreenBag();
+  const {
+    isStudentPassOpen,
+    setIsStudentPassOpen,
+    user,
+    firebaseUser,
+    resendVerificationEmail,
+    setIsPrivacyNoticeOpen,
+    setIsDeleteAccountOpen,
+    logout,
+  } = useGreenBag();
 
   if (!isStudentPassOpen) return null;
 
+  const isEmailVerified = firebaseUser?.emailVerified;
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-      <div className="w-full max-w-sm rounded-[24px] bg-[#FAF9F5] border border-[#E2DEC2] p-5 shadow-tactile-fab relative animate-subtle-pulse">
+      <div className="w-full max-w-sm max-h-[90vh] overflow-y-auto rounded-[24px] bg-[#FAF9F5] border border-[#E2DEC2] p-5 shadow-tactile-fab relative">
         {/* Close Button */}
         <button
           onClick={() => setIsStudentPassOpen(false)}
@@ -65,7 +86,6 @@ export const StudentPassModal: React.FC = () => {
 
             {/* Scannable Barcode & QR Code */}
             <div className="mt-5 p-3 rounded-xl bg-white text-[#14261C] flex flex-col items-center justify-center shadow-inner">
-              {/* Simulated barcode */}
               <div className="flex items-center justify-center gap-[3px] h-10 w-full px-2">
                 {Array.from({ length: 44 }).map((_, i) => (
                   <div
@@ -88,21 +108,70 @@ export const StudentPassModal: React.FC = () => {
             {/* Footer metadata */}
             <div className="mt-4 flex items-center justify-between text-[10px] text-white/80">
               <span className="flex items-center gap-1 font-semibold text-[#acf1d3]">
-                <CheckCircle2 className="w-3.5 h-3.5" /> Good Standing • Unlimited Loan Period
+                <CheckCircle2 className="w-3.5 h-3.5" /> Good Standing • No Return Deadlines
               </span>
               <span>Member since {user.memberSince}</span>
             </div>
           </div>
         </div>
 
+        {/* Email Verification status check */}
+        {firebaseUser && !isEmailVerified && (
+          <div className="mt-4 p-3 rounded-xl bg-[#ffdad6]/70 border border-[#ba1a1a]/30 text-xs text-[#ba1a1a]">
+            <div className="flex items-center gap-1.5 font-bold mb-1">
+              <AlertCircle className="w-4 h-4 shrink-0" />
+              <span>Email Verification Pending</span>
+            </div>
+            <p className="text-[11px] text-[#2D3E35] mb-2">
+              Please click the verification link sent to <strong>{firebaseUser.email}</strong>.
+            </p>
+            <button
+              onClick={resendVerificationEmail}
+              className="text-[11px] font-bold text-[#ba1a1a] underline hover:text-[#93000a] flex items-center gap-1"
+            >
+              <Mail className="w-3.5 h-3.5" /> Resend Verification Email
+            </button>
+          </div>
+        )}
+
         {/* Verification guarantee info */}
         <div className="mt-4 p-3 rounded-xl bg-[#def3e3] border border-[#E2DEC2] text-xs text-[#2D3E35] flex items-center gap-2">
           <ShieldCheck className="w-4 h-4 text-[#186049] shrink-0" />
-          <span>
-            This digital pass grants instant checkout privileges at all 6 APU Eco kiosks.
-          </span>
+          <span>This digital pass grants instant checkout privileges at all 6 APU Eco kiosks.</span>
         </div>
 
+        {/* Account governance links */}
+        <div className="mt-4 pt-3 border-t border-[#E2DEC2] space-y-2">
+          <button
+            onClick={() => {
+              setIsStudentPassOpen(false);
+              setIsPrivacyNoticeOpen(true);
+            }}
+            className="w-full py-2.5 px-3 rounded-xl bg-[#FAF9F5] border border-[#E2DEC2] hover:bg-[#def3e3] text-left text-xs font-semibold text-[#14261C] flex items-center justify-between transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <Shield className="w-4 h-4 text-[#186049]" />
+              <span>Campus Privacy Notice & Data Policy</span>
+            </div>
+            <span className="text-[10px] text-[#707974]">View Rights →</span>
+          </button>
+
+          <button
+            onClick={() => {
+              setIsStudentPassOpen(false);
+              setIsDeleteAccountOpen(true);
+            }}
+            className="w-full py-2.5 px-3 rounded-xl bg-[#FAF9F5] border border-[#E2DEC2] hover:bg-[#ffdad6]/40 text-left text-xs font-semibold text-[#ba1a1a] flex items-center justify-between transition-colors"
+          >
+            <div className="flex items-center gap-2">
+              <Trash2 className="w-4 h-4 text-[#ba1a1a]" />
+              <span>Delete My Account & Purge Data</span>
+            </div>
+            <span className="text-[10px] text-[#ba1a1a]">Manage →</span>
+          </button>
+        </div>
+
+        {/* Action Buttons */}
         <div className="mt-4 flex items-center gap-2">
           <button
             onClick={() => setIsStudentPassOpen(false)}

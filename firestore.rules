@@ -9,6 +9,7 @@ service cloud.firestore {
     function isAdmin() {
       return isSignedIn() && (
         request.auth.token.email == 'menazaki012@gmail.com' ||
+        request.auth.token.email == 'menazaky012@gmail.com' ||
         exists(/databases/$(database)/documents/admins/$(request.auth.uid))
       );
     }
@@ -32,17 +33,68 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
 
-    // Connection testing endpoint
-    match /test/{docId} {
-      allow read, write: if true;
+    // Global Bags Collection: 1 record per physical bag with QR token verification
+    match /bags/{bagId} {
+      allow read: if isSignedIn();
+      allow create, delete: if isAdmin();
+      allow update: if isSignedIn() && (
+        isAdmin() ||
+        // Verified Borrow: Bag was available and is now borrowed by request.auth.uid
+        (
+          resource.data.status == 'available' &&
+          request.resource.data.status == 'borrowed' &&
+          request.resource.data.currentBorrowerId == request.auth.uid
+        ) ||
+        // Verified Return: Bag was borrowed by request.auth.uid and is now returned/available
+        (
+          resource.data.status == 'borrowed' &&
+          resource.data.currentBorrowerId == request.auth.uid &&
+          request.resource.data.status == 'available' &&
+          request.resource.data.currentBorrowerId == null
+        )
+      );
     }
 
-    // User profiles and subcollections (Admins can list and inspect all accounts)
+    // Campus-wide collective milestone counter
+    match /campus/{metricId} {
+      allow read: if true;
+      allow create, update: if isSignedIn();
+      allow delete: if isAdmin();
+    }
+
+    // User profiles & protected subcollections
     match /users/{userId} {
       allow get: if isOwner(userId) || isAdmin();
       allow list: if isAdmin();
-      allow create, update: if isOwner(userId) || isAdmin();
-      allow delete: if isAdmin();
+
+      // New users start with 0 points and 0 bags saved
+      allow create: if isOwner(userId) &&
+        request.resource.data.points == 0 &&
+        request.resource.data.bagsSavedTotal == 0;
+
+      // Updates strictly protect points: either exactly +50 on verified bag return,
+      // point deduction on reward redemption, metadata/name edit, or admin action
+      allow update: if isOwner(userId) && (
+        isAdmin() ||
+        // Verified Return: Exactly +50 points and +1 bag saved
+        (
+          request.resource.data.points == resource.data.points + 50 &&
+          request.resource.data.bagsSavedTotal == resource.data.bagsSavedTotal + 1
+        ) ||
+        // Reward redemption: Points decrease by cost of redeemed reward, bags saved unchanged
+        (
+          request.resource.data.points <= resource.data.points &&
+          request.resource.data.bagsSavedTotal == resource.data.bagsSavedTotal
+        ) ||
+        // Profile text update: Points and bags saved remain strictly identical
+        (
+          request.resource.data.points == resource.data.points &&
+          request.resource.data.bagsSavedTotal == resource.data.bagsSavedTotal
+        )
+      );
+
+      // Account deletion support: user can delete their own profile or admin can
+      allow delete: if isOwner(userId) || isAdmin();
 
       match /bags/{bagId} {
         allow read: if isOwner(userId) || isAdmin();
@@ -57,6 +109,11 @@ service cloud.firestore {
       match /stamps/{stampId} {
         allow read: if isOwner(userId) || isAdmin();
         allow write: if (isOwner(userId) || isAdmin()) && isValidId(stampId);
+      }
+
+      match /vouchers/{voucherId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow write: if (isOwner(userId) || isAdmin()) && isValidId(voucherId);
       }
     }
   }

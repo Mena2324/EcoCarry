@@ -12,6 +12,8 @@ import { BagDetailsModal } from './components/BagDetailsModal';
 import { Toast } from './components/Toast';
 import { LoginView } from './components/LoginView';
 import { DeveloperConsoleModal } from './components/DeveloperConsoleModal';
+import { PrivacyNoticeModal } from './components/PrivacyNoticeModal';
+import { AccountDeletionModal } from './components/AccountDeletionModal';
 
 const MainContent: React.FC = () => {
   const { activeTab, isAuthenticated } = useGreenBag();
@@ -70,6 +72,12 @@ const MainContent: React.FC = () => {
 
         {/* Developer & Admin Console Modal */}
         <DeveloperConsoleModal />
+
+        {/* Privacy Notice Modal */}
+        <PrivacyNoticeModal />
+
+        {/* Account Deletion Modal */}
+        <AccountDeletionModal />
       </div>
     </div>
   );

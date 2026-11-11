@@ -1,6 +1,6 @@
 import React from 'react';
 import { useGreenBag } from '../context/GreenBagContext';
-import { Leaf, QrCode, Sparkles, RefreshCw, Smartphone, Monitor, LogOut, Database } from 'lucide-react';
+import { Leaf, QrCode, Sparkles, RefreshCw, Smartphone, Monitor, LogOut, Database, Shield } from 'lucide-react';
 
 interface HeaderProps {
   isMobileFrame: boolean;
@@ -8,7 +8,15 @@ interface HeaderProps {
 }
 
 export const Header: React.FC<HeaderProps> = ({ isMobileFrame, setIsMobileFrame }) => {
-  const { user, setIsStudentPassOpen, resetData, logout, setIsDevConsoleOpen, isCurrentUserAdmin } = useGreenBag();
+  const {
+    user,
+    setIsStudentPassOpen,
+    resetData,
+    logout,
+    setIsDevConsoleOpen,
+    isCurrentUserAdmin,
+    setIsPrivacyNoticeOpen,
+  } = useGreenBag();
 
   return (
     <header className="sticky top-0 z-30 bg-[#FAF9F5]/95 backdrop-blur-md border-b border-[#E2DEC2] px-4 py-3">
@@ -52,6 +60,15 @@ export const Header: React.FC<HeaderProps> = ({ isMobileFrame, setIsMobileFrame 
             className="p-2 rounded-full text-[#2D3E35] hover:text-[#186049] hover:bg-[#def3e3] transition-colors"
           >
             <RefreshCw className="w-4 h-4" />
+          </button>
+
+          {/* Privacy Policy */}
+          <button
+            onClick={() => setIsPrivacyNoticeOpen(true)}
+            title="Campus Privacy Notice & Data Policy"
+            className="p-2 rounded-full text-[#2D3E35] hover:text-[#186049] hover:bg-[#def3e3] transition-colors"
+          >
+            <Shield className="w-4 h-4" />
           </button>
 
           {/* Logout / Switch User */}

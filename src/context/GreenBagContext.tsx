@@ -1,38 +1,18 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
 import confetti from 'canvas-confetti';
 import {
-  ActiveBag,
-  Station,
-  Reward,
-  EcoBadge,
-  UserProfile,
-  StampSlot,
-  CampusMetrics,
-} from '../types/greenbag';
-import {
-  INITIAL_USER,
-  INITIAL_CAMPUS_METRICS,
-  INITIAL_ACTIVE_BAGS,
-  INITIAL_STATIONS,
-  INITIAL_REWARDS,
-  INITIAL_BADGES,
-  RECENT_ACTIVITY_LOGS,
-  INITIAL_DEV_ACCOUNTS,
-  DevAccount,
-} from '../data/mockData';
-import {
   auth,
   db,
   googleProvider,
   signInWithPopup,
+  signInWithEmailAndPassword,
+  createUserWithEmailAndPassword,
+  sendEmailVerification,
+  sendPasswordResetEmail,
   fbSignOut,
   onAuthStateChanged,
-  testConnection,
-  OperationType,
-  handleFirestoreError,
-  FirebaseUser,
-} from '../firebase/config';
-import {
+  deleteUser,
+  updateProfile,
   doc,
   collection,
   setDoc,
@@ -40,16 +20,35 @@ import {
   getDocs,
   onSnapshot,
   deleteDoc,
-} from 'firebase/firestore';
-
-interface ActivityLog {
-  id: string;
-  action: string;
-  bagNumber: string;
-  location: string;
-  time: string;
-  type: string;
-}
+  runTransaction,
+  serverTimestamp,
+  increment,
+  FirebaseUser,
+  handleFirestoreError,
+  OperationType,
+} from '../firebase/config';
+import {
+  ActiveBag,
+  Station,
+  Reward,
+  EcoBadge,
+  UserProfile,
+  StampSlot,
+  CampusMetrics,
+  GlobalBag,
+  RewardVoucher,
+  ActivityLog,
+} from '../types/greenbag';
+import {
+  INITIAL_USER,
+  INITIAL_STATIONS,
+  INITIAL_REWARDS,
+  INITIAL_BADGES,
+  INITIAL_CAMPUS_METRICS,
+  INITIAL_GLOBAL_BAGS,
+  INITIAL_DEV_ACCOUNTS,
+  DevAccount,
+} from '../data/mockData';
 
 interface GreenBagContextType {
   user: UserProfile;
@@ -57,12 +56,14 @@ interface GreenBagContextType {
   firebaseConnected: boolean;
   firebaseProjectId: string;
   campusMetrics: CampusMetrics;
+  globalBags: GlobalBag[];
   activeBags: ActiveBag[];
   stations: Station[];
   rewards: Reward[];
   badges: EcoBadge[];
   stampSlots: StampSlot[];
   activities: ActivityLog[];
+  userVouchers: RewardVoucher[];
   activeTab: 'home' | 'stations' | 'rewards' | 'community';
   setActiveTab: (tab: 'home' | 'stations' | 'rewards' | 'community') => void;
   isScannerOpen: boolean;
@@ -79,15 +80,17 @@ interface GreenBagContextType {
   setSelectedBagDetails: (bag: ActiveBag | null) => void;
   selectedStationModal: Station | null;
   setSelectedStationModal: (station: Station | null) => void;
+  isPrivacyNoticeOpen: boolean;
+  setIsPrivacyNoticeOpen: (open: boolean) => void;
+  isDeleteAccountOpen: boolean;
+  setIsDeleteAccountOpen: (open: boolean) => void;
   isAuthenticated: boolean;
-  setIsAuthenticated: (auth: boolean) => void;
-  login: (credentials?: {
-    studentIdOrEmail?: string;
-    name?: string;
-    faculty?: string;
-    isNewAccount?: boolean;
-  }) => void;
   loginWithGoogle: () => Promise<void>;
+  loginWithEmailPassword: (email: string, pass: string) => Promise<void>;
+  registerWithEmailPassword: (email: string, pass: string, name: string, faculty: string) => Promise<void>;
+  resendVerificationEmail: () => Promise<void>;
+  sendPasswordReset: (email: string) => Promise<void>;
+  deleteAccount: () => Promise<void>;
   logout: () => void;
   isCurrentUserAdmin: boolean;
   isDevConsoleOpen: boolean;
@@ -98,23 +101,22 @@ interface GreenBagContextType {
   exportAllData: (format: 'json' | 'csv') => void;
   toastMessage: { text: string; type: 'success' | 'info' | 'warning' } | null;
   showToast: (text: string, type?: 'success' | 'info' | 'warning') => void;
-  borrowBag: (stationId: string, bagType: ActiveBag['type'], customNumber?: string) => void;
-  returnBag: (bagId: string, stationId: string) => boolean;
-  extendBorrow: (bagId: string) => void;
-  redeemReward: (rewardId: string) => boolean;
+  borrowBag: (stationId: string, bagId: string, scannedQrToken?: string) => Promise<boolean>;
+  returnBag: (bagId: string, stationId: string) => Promise<boolean>;
+  redeemReward: (rewardId: string) => Promise<boolean>;
   resetData: () => void;
 }
 
 const GreenBagContext = createContext<GreenBagContextType | undefined>(undefined);
 
-const LOCAL_STORAGE_KEY = 'ecocarry_app_state_v4';
+const LOCAL_STORAGE_KEY = 'ecocarry_app_state_v5';
 const FIREBASE_PROJECT_ID = 'ecosave-34ef8';
 
 export const GreenBagProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
   const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
-  const [firebaseConnected, setFirebaseConnected] = useState<boolean>(false);
+  const [firebaseConnected, setFirebaseConnected] = useState<boolean>(true);
 
-  // Clear legacy stored versions so old hardcoded numbers (148,290 / mock activities) never persist in the user's browser
+  // Clear legacy stored versions so old hardcoded numbers never persist
   useEffect(() => {
     try {
       const keysToRemove: string[] = [];
@@ -125,6 +127,7 @@ export const GreenBagProvider: React.FC<{ children: React.ReactNode }> = ({ chil
           (k.startsWith('ecocarry_app_state_v1') ||
             k.startsWith('ecocarry_app_state_v2') ||
             k.startsWith('ecocarry_app_state_v3') ||
+            k.startsWith('ecocarry_app_state_v4') ||
             k.startsWith('greenbag_app_state_'))
         ) {
           keysToRemove.push(k);
@@ -137,127 +140,36 @@ export const GreenBagProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   }, []);
 
   // User profile state - starts at 0 metrics
-  const [user, setUser] = useState<UserProfile>(() => {
-    try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_user');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        return {
-          ...INITIAL_USER,
-          ...parsed,
-          bagsSavedTotal: parsed.bagsSavedTotal ?? 0,
-          co2SavedKg: parsed.co2SavedKg ?? 0,
-          points: parsed.points ?? 0,
-          activeStreak: parsed.activeStreak ?? 0,
-        };
-      }
-      return INITIAL_USER;
-    } catch {
-      return INITIAL_USER;
-    }
-  });
+  const [user, setUser] = useState<UserProfile>(INITIAL_USER);
 
   // Campus collective metrics - strictly starts at 0
-  const [campusMetrics, setCampusMetrics] = useState<CampusMetrics>(() => {
-    try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_campus_metrics');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        // If legacy high number was saved, force reset to zero
-        if (parsed.totalBagsEliminated > 10000 || parsed.totalBagsEliminated === 148290) {
-          return INITIAL_CAMPUS_METRICS;
-        }
-        return parsed;
-      }
-      return INITIAL_CAMPUS_METRICS;
-    } catch {
-      return INITIAL_CAMPUS_METRICS;
-    }
-  });
+  const [campusMetrics, setCampusMetrics] = useState<CampusMetrics>(INITIAL_CAMPUS_METRICS);
 
-  // Active bags - starts at empty array
-  const [activeBags, setActiveBags] = useState<ActiveBag[]>(() => {
-    try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_bags');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.some((b: ActiveBag) => b.bagNumber === 'GB-0482' || b.bagNumber === 'GB-1099')) {
-          return [];
-        }
-        return Array.isArray(parsed) ? parsed : [];
-      }
-      return [];
-    } catch {
-      return [];
-    }
-  });
+  // Global bags registry from Firestore collection /bags
+  const [globalBags, setGlobalBags] = useState<GlobalBag[]>(INITIAL_GLOBAL_BAGS);
 
-  const [stations, setStations] = useState<Station[]>(() => {
-    try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_stations');
-      return saved ? JSON.parse(saved) : INITIAL_STATIONS;
-    } catch {
-      return INITIAL_STATIONS;
-    }
-  });
+  // Active bags borrowed by current user
+  const [activeBags, setActiveBags] = useState<ActiveBag[]>([]);
 
-  const [rewards, setRewards] = useState<Reward[]>(() => {
-    try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_rewards');
-      return saved ? JSON.parse(saved) : INITIAL_REWARDS;
-    } catch {
-      return INITIAL_REWARDS;
-    }
-  });
+  // Stations, Rewards, Badges
+  const [stations, setStations] = useState<Station[]>(INITIAL_STATIONS);
+  const [rewards, setRewards] = useState<Reward[]>(INITIAL_REWARDS);
+  const [badges, setBadges] = useState<EcoBadge[]>(INITIAL_BADGES);
 
-  const [badges, setBadges] = useState<EcoBadge[]>(() => {
-    try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_badges');
-      return saved ? JSON.parse(saved) : INITIAL_BADGES;
-    } catch {
-      return INITIAL_BADGES;
-    }
-  });
-
-  const [stampSlots, setStampSlots] = useState<StampSlot[]>(() => {
-    try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_stamps');
-      if (saved) return JSON.parse(saved);
-    } catch {
-      // ignore
-    }
-    return Array.from({ length: 10 }, (_, i) => ({
+  // Stamps & Vouchers
+  const [stampSlots, setStampSlots] = useState<StampSlot[]>(() =>
+    Array.from({ length: 10 }, (_, i) => ({
       index: i + 1,
       isStamped: false,
-    }));
-  });
+    }))
+  );
+  const [userVouchers, setUserVouchers] = useState<RewardVoucher[]>([]);
 
-  // Recent activity logs - starts empty (0 activities)
-  const [activities, setActivities] = useState<ActivityLog[]>(() => {
-    try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_activities');
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.some((a: ActivityLog) => a.bagNumber === 'GB-0482' || a.bagNumber === 'GB-0921')) {
-          return [];
-        }
-        return Array.isArray(parsed) ? parsed : [];
-      }
-      return [];
-    } catch {
-      return [];
-    }
-  });
+  // Recent activity logs
+  const [activities, setActivities] = useState<ActivityLog[]>([]);
 
   // Auth state
-  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(() => {
-    try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_auth');
-      return saved ? JSON.parse(saved) : false;
-    } catch {
-      return false;
-    }
-  });
+  const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
 
   // UI Navigation & Modals
   const [activeTab, setActiveTab] = useState<'home' | 'stations' | 'rewards' | 'community'>('home');
@@ -268,160 +180,29 @@ export const GreenBagProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   const [isStudentPassOpen, setIsStudentPassOpen] = useState<boolean>(false);
   const [selectedBagDetails, setSelectedBagDetails] = useState<ActiveBag | null>(null);
   const [selectedStationModal, setSelectedStationModal] = useState<Station | null>(null);
+  const [isPrivacyNoticeOpen, setIsPrivacyNoticeOpen] = useState<boolean>(false);
+  const [isDeleteAccountOpen, setIsDeleteAccountOpen] = useState<boolean>(false);
   const [isDevConsoleOpen, setIsDevConsoleOpen] = useState<boolean>(false);
-  const [devAccounts, setDevAccounts] = useState<DevAccount[]>(() => {
-    try {
-      const saved = localStorage.getItem(LOCAL_STORAGE_KEY + '_dev_accounts');
-      return saved ? JSON.parse(saved) : INITIAL_DEV_ACCOUNTS;
-    } catch {
-      return INITIAL_DEV_ACCOUNTS;
-    }
-  });
+  const [devAccounts, setDevAccounts] = useState<DevAccount[]>(INITIAL_DEV_ACCOUNTS);
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'info' | 'warning' } | null>(null);
 
-  // Admin permission check: STRICTLY restricted to the developer's verified email menazaky012@ / menazaki012@
-  // No student ID, demo account, or user name bypass allowed!
-  const currentEmail = (
-    firebaseUser?.email ||
-    (user.studentId?.includes('@') ? user.studentId : '')
-  ).toLowerCase().trim();
-
+  // Admin permission check: STRICTLY restricted to verified email menazaky012@ / menazaki012@
+  const currentEmail = (firebaseUser?.email || '').toLowerCase().trim();
   const isCurrentUserAdmin = Boolean(
-    currentEmail &&
-    (currentEmail.startsWith('menazaky012@') ||
-     currentEmail.startsWith('menazaki012@') ||
-     currentEmail === 'menazaky012@gmail.com' ||
-     currentEmail === 'menazaki012@gmail.com' ||
-     currentEmail.includes('menazaky012') ||
-     currentEmail.includes('menazaki012'))
+    firebaseUser &&
+      (currentEmail.startsWith('menazaky012@') ||
+        currentEmail.startsWith('menazaki012@') ||
+        currentEmail === 'menazaky012@gmail.com' ||
+        currentEmail === 'menazaki012@gmail.com' ||
+        currentEmail.includes('menazaky012') ||
+        currentEmail.includes('menazaki012'))
   );
-
-  // Sync devAccounts to storage
-  useEffect(() => {
-    try {
-      localStorage.setItem(LOCAL_STORAGE_KEY + '_dev_accounts', JSON.stringify(devAccounts));
-    } catch {}
-  }, [devAccounts]);
-
-  // Test Firestore connection on mount
-  useEffect(() => {
-    testConnection()
-      .then(() => setFirebaseConnected(true))
-      .catch(() => setFirebaseConnected(false));
-  }, []);
-
-  // Listen to Firebase Auth state
-  useEffect(() => {
-    const unsubscribeAuth = onAuthStateChanged(auth, async (fbUser) => {
-      setFirebaseUser(fbUser);
-      if (fbUser) {
-        setIsAuthenticated(true);
-        try {
-          localStorage.setItem(LOCAL_STORAGE_KEY + '_auth', 'true');
-        } catch {}
-
-        // Sync or initialize user profile in Firestore
-        const userDocRef = doc(db, 'users', fbUser.uid);
-        try {
-          const userDocSnap = await getDoc(userDocRef);
-          if (userDocSnap.exists()) {
-            const data = userDocSnap.data();
-            setUser((prev) => ({
-              ...prev,
-              studentName: data.studentName || fbUser.displayName || prev.studentName,
-              studentId: data.studentId || prev.studentId,
-              faculty: data.faculty || prev.faculty,
-              points: data.points ?? prev.points,
-              activeStreak: data.activeStreak ?? prev.activeStreak,
-              bagsSavedTotal: data.bagsSavedTotal ?? prev.bagsSavedTotal,
-              co2SavedKg: data.co2SavedKg ?? prev.co2SavedKg,
-            }));
-          } else {
-            // First time Firestore profile creation - starts at 0
-            const initialProfile = {
-              studentName: fbUser.displayName || 'Eco Student',
-              studentId: fbUser.email?.split('@')[0].toUpperCase() || 'APU-2024-0001',
-              faculty: 'School of Technology & AI',
-              tier: 'SEEDLING EXPLORER',
-              points: 0,
-              activeStreak: 0,
-              bagsSavedTotal: 0,
-              co2SavedKg: 0,
-              email: fbUser.email || '',
-              updatedAt: new Date().toISOString(),
-            };
-            await setDoc(userDocRef, initialProfile);
-          }
-        } catch (err) {
-          console.warn('Could not read user profile from Firestore:', err);
-        }
-
-        // Real-time listener for active borrowed bags
-        const bagsColRef = collection(db, 'users', fbUser.uid, 'bags');
-        const unsubBags = onSnapshot(
-          bagsColRef,
-          (snapshot) => {
-            if (!snapshot.empty) {
-              const liveBags: ActiveBag[] = snapshot.docs.map((d) => ({
-                id: d.id,
-                ...(d.data() as Omit<ActiveBag, 'id'>),
-              }));
-              setActiveBags(liveBags);
-            }
-          },
-          (error) => {
-            handleFirestoreError(error, OperationType.LIST, `users/${fbUser.uid}/bags`);
-          }
-        );
-
-        // Real-time listener for activities
-        const actColRef = collection(db, 'users', fbUser.uid, 'activities');
-        const unsubAct = onSnapshot(
-          actColRef,
-          (snapshot) => {
-            if (!snapshot.empty) {
-              const liveAct: ActivityLog[] = snapshot.docs.map((d) => ({
-                id: d.id,
-                ...(d.data() as Omit<ActivityLog, 'id'>),
-              }));
-              setActivities(liveAct);
-            }
-          },
-          (error) => {
-            handleFirestoreError(error, OperationType.LIST, `users/${fbUser.uid}/activities`);
-          }
-        );
-
-        return () => {
-          unsubBags();
-          unsubAct();
-        };
-      }
-    });
-
-    return () => unsubscribeAuth();
-  }, []);
-
-  // Sync to local storage
-  useEffect(() => {
-    try {
-      localStorage.setItem(LOCAL_STORAGE_KEY + '_user', JSON.stringify(user));
-      localStorage.setItem(LOCAL_STORAGE_KEY + '_bags', JSON.stringify(activeBags));
-      localStorage.setItem(LOCAL_STORAGE_KEY + '_stations', JSON.stringify(stations));
-      localStorage.setItem(LOCAL_STORAGE_KEY + '_rewards', JSON.stringify(rewards));
-      localStorage.setItem(LOCAL_STORAGE_KEY + '_badges', JSON.stringify(badges));
-      localStorage.setItem(LOCAL_STORAGE_KEY + '_stamps', JSON.stringify(stampSlots));
-      localStorage.setItem(LOCAL_STORAGE_KEY + '_activities', JSON.stringify(activities));
-    } catch {
-      // ignore
-    }
-  }, [user, activeBags, stations, rewards, badges, stampSlots, activities]);
 
   const showToast = (text: string, type: 'success' | 'info' | 'warning' = 'success') => {
     setToastMessage({ text, type });
     setTimeout(() => {
       setToastMessage((prev) => (prev?.text === text ? null : prev));
-    }, 4000);
+    }, 4500);
   };
 
   const triggerConfetti = () => {
@@ -437,403 +218,761 @@ export const GreenBagProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     }
   };
 
-  // Google Login via Firebase
+  // 1. Initialize Global Bags collection /bags in Firestore if empty
+  useEffect(() => {
+    const initGlobalBags = async () => {
+      try {
+        const bagsColRef = collection(db, 'bags');
+        const snap = await getDocs(bagsColRef);
+        if (snap.empty) {
+          for (const bag of INITIAL_GLOBAL_BAGS) {
+            await setDoc(doc(db, 'bags', bag.id), {
+              ...bag,
+              createdAt: serverTimestamp(),
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('Could not bootstrap global bags collection:', err);
+      }
+    };
+
+    initGlobalBags();
+
+    // Real-time listener for global bags
+    const unsubGlobalBags = onSnapshot(
+      collection(db, 'bags'),
+      (snapshot) => {
+        if (!snapshot.empty) {
+          const liveBags: GlobalBag[] = snapshot.docs.map((d) => ({
+            id: d.id,
+            ...(d.data() as Omit<GlobalBag, 'id'>),
+          }));
+          setGlobalBags(liveBags);
+
+          // Update station bag counts dynamically
+          setStations((prevStations) =>
+            prevStations.map((station) => {
+              const stationAvailable = liveBags.filter(
+                (b) => b.borrowedStationId === station.id && b.status === 'available'
+              ).length;
+              return {
+                ...station,
+                bagInventory: {
+                  ...station.bagInventory,
+                  available: stationAvailable > 0 ? stationAvailable : station.bagInventory.available,
+                },
+              };
+            })
+          );
+        }
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, 'bags');
+      }
+    );
+
+    // Real-time listener for campus-wide totals (/campus/totals)
+    const unsubCampus = onSnapshot(
+      doc(db, 'campus', 'totals'),
+      (docSnap) => {
+        if (docSnap.exists()) {
+          const data = docSnap.data();
+          setCampusMetrics({
+            totalBagsEliminated: data.totalBagsEliminated ?? 0,
+            monthlyGoal: data.monthlyGoal ?? 180000,
+            co2AvoidedKg: data.co2AvoidedKg ?? 0,
+            activeCampusers: data.activeCampusers ?? 1,
+            treesEquivalent: data.treesEquivalent ?? 0,
+          });
+        }
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.GET, 'campus/totals');
+      }
+    );
+
+    return () => {
+      unsubGlobalBags();
+      unsubCampus();
+    };
+  }, []);
+
+  // 2. Real-time Firebase Auth listener & User Subcollections sync
+  useEffect(() => {
+    const unsubscribeAuth = onAuthStateChanged(auth, async (fbUser) => {
+      setFirebaseUser(fbUser);
+      if (fbUser) {
+        setIsAuthenticated(true);
+        setFirebaseConnected(true);
+
+        const userDocRef = doc(db, 'users', fbUser.uid);
+        try {
+          const userDocSnap = await getDoc(userDocRef);
+          if (userDocSnap.exists()) {
+            const data = userDocSnap.data();
+            setUser({
+              studentName: data.studentName || fbUser.displayName || 'Eco Student',
+              studentId: data.studentId || fbUser.email?.split('@')[0].toUpperCase() || 'APU-STUDENT',
+              faculty: data.faculty || 'School of Technology & AI',
+              tier: data.tier || 'SEEDLING EXPLORER',
+              points: data.points ?? 0,
+              activeStreak: data.activeStreak ?? 0,
+              bagsSavedTotal: data.bagsSavedTotal ?? 0,
+              co2SavedKg: data.co2SavedKg ?? 0,
+              avatarSeed: 'ecouser',
+              memberSince: data.memberSince || 'November 2024',
+            });
+          } else {
+            // First time profile creation: strictly 0 points and 0 bags
+            const initialProfile = {
+              studentName: fbUser.displayName || 'Eco Student',
+              studentId: fbUser.email?.split('@')[0].toUpperCase() || 'APU-STUDENT',
+              faculty: 'School of Technology & AI',
+              tier: 'SEEDLING EXPLORER',
+              points: 0,
+              activeStreak: 0,
+              bagsSavedTotal: 0,
+              co2SavedKg: 0,
+              email: fbUser.email || '',
+              memberSince: new Date().toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
+              updatedAt: serverTimestamp(),
+            };
+            await setDoc(userDocRef, initialProfile);
+            setUser({
+              ...INITIAL_USER,
+              studentName: initialProfile.studentName,
+              studentId: initialProfile.studentId,
+              faculty: initialProfile.faculty,
+              points: 0,
+              activeStreak: 0,
+              bagsSavedTotal: 0,
+              co2SavedKg: 0,
+            });
+          }
+        } catch (err) {
+          console.warn('Could not read user profile from Firestore:', err);
+        }
+
+        // Real-time listener for user profile doc updates
+        const unsubUserDoc = onSnapshot(userDocRef, (snap) => {
+          if (snap.exists()) {
+            const d = snap.data();
+            setUser((prev) => ({
+              ...prev,
+              studentName: d.studentName || prev.studentName,
+              studentId: d.studentId || prev.studentId,
+              faculty: d.faculty || prev.faculty,
+              points: d.points ?? 0,
+              activeStreak: d.activeStreak ?? 0,
+              bagsSavedTotal: d.bagsSavedTotal ?? 0,
+              co2SavedKg: d.co2SavedKg ?? 0,
+            }));
+          }
+        });
+
+        // Real-time listener for active borrowed bags (/users/{uid}/bags)
+        const bagsColRef = collection(db, 'users', fbUser.uid, 'bags');
+        const unsubBags = onSnapshot(
+          bagsColRef,
+          (snapshot) => {
+            const liveBags: ActiveBag[] = snapshot.docs.map((d) => ({
+              id: d.id,
+              ...(d.data() as Omit<ActiveBag, 'id'>),
+            }));
+            setActiveBags(liveBags);
+          },
+          (error) => {
+            handleFirestoreError(error, OperationType.LIST, `users/${fbUser.uid}/bags`);
+          }
+        );
+
+        // Real-time listener for user activities (/users/{uid}/activities)
+        const actColRef = collection(db, 'users', fbUser.uid, 'activities');
+        const unsubAct = onSnapshot(
+          actColRef,
+          (snapshot) => {
+            const liveAct: ActivityLog[] = snapshot.docs.map((d) => ({
+              id: d.id,
+              ...(d.data() as Omit<ActivityLog, 'id'>),
+            }));
+            setActivities(liveAct);
+          },
+          (error) => {
+            handleFirestoreError(error, OperationType.LIST, `users/${fbUser.uid}/activities`);
+          }
+        );
+
+        // Real-time listener for redeemed vouchers (/users/{uid}/vouchers)
+        const vchColRef = collection(db, 'users', fbUser.uid, 'vouchers');
+        const unsubVch = onSnapshot(
+          vchColRef,
+          (snapshot) => {
+            const liveVouchers: RewardVoucher[] = snapshot.docs.map((d) => ({
+              id: d.id,
+              ...(d.data() as Omit<RewardVoucher, 'id'>),
+            }));
+            setUserVouchers(liveVouchers);
+          },
+          (error) => {
+            handleFirestoreError(error, OperationType.LIST, `users/${fbUser.uid}/vouchers`);
+          }
+        );
+
+        // Real-time listener for stamps
+        const stampsColRef = collection(db, 'users', fbUser.uid, 'stamps');
+        const unsubStamps = onSnapshot(stampsColRef, (snapshot) => {
+          if (!snapshot.empty) {
+            const stampMap: Record<number, StampSlot> = {};
+            snapshot.docs.forEach((docSnap) => {
+              const data = docSnap.data() as StampSlot;
+              stampMap[data.index] = data;
+            });
+            setStampSlots(
+              Array.from({ length: 10 }, (_, i) => {
+                const idx = i + 1;
+                return (
+                  stampMap[idx] || {
+                    index: idx,
+                    isStamped: false,
+                  }
+                );
+              })
+            );
+          }
+        });
+
+        return () => {
+          unsubUserDoc();
+          unsubBags();
+          unsubAct();
+          unsubVch();
+          unsubStamps();
+        };
+      } else {
+        setIsAuthenticated(false);
+        setUser(INITIAL_USER);
+        setActiveBags([]);
+        setActivities([]);
+        setUserVouchers([]);
+      }
+    });
+
+    return () => unsubscribeAuth();
+  }, []);
+
+  // 3. Real Firebase Auth Operations ONLY (NO MOCK / NO FALLBACK)
   const loginWithGoogle = async () => {
     try {
       const result = await signInWithPopup(auth, googleProvider);
       const fbUser = result.user;
       setFirebaseUser(fbUser);
       setIsAuthenticated(true);
-      showToast(`Signed in as ${fbUser.displayName || fbUser.email} via Firebase Auth!`, 'success');
-    } catch (err: unknown) {
-      console.warn('Google sign-in error:', err);
-      // If popup was cancelled or blocked, fall back gracefully
-      login({
-        studentIdOrEmail: 'TP068412@mail.apu.edu.my',
-        name: 'Mena Zaki',
-        faculty: 'School of Technology & AI',
-      });
+      showToast(`Welcome, ${fbUser.displayName || fbUser.email}! Verified with Firebase.`, 'success');
+    } catch (err: any) {
+      console.error('Google sign-in error:', err);
+      showToast(err.message || 'Google sign-in was interrupted. Please try again.', 'warning');
     }
   };
 
-  // Standard, Demo, or Create Account login
-  const login = (credentials?: {
-    studentIdOrEmail?: string;
-    name?: string;
-    faculty?: string;
-    isNewAccount?: boolean;
-  }) => {
-    if (credentials?.name || credentials?.studentIdOrEmail) {
-      const isNew = Boolean(credentials.isNewAccount);
-      setUser((prev) => ({
-        ...prev,
-        studentName: credentials.name || prev.studentName,
-        studentId: credentials.studentIdOrEmail || prev.studentId,
-        faculty: credentials.faculty || prev.faculty,
-        tier: isNew ? 'SEEDLING EXPLORER' : prev.tier,
-        points: isNew ? 0 : prev.points,
-        activeStreak: isNew ? 0 : prev.activeStreak,
-        bagsSavedTotal: isNew ? 0 : prev.bagsSavedTotal,
-        co2SavedKg: isNew ? 0 : prev.co2SavedKg,
-      }));
+  const loginWithEmailPassword = async (email: string, pass: string) => {
+    try {
+      const result = await signInWithEmailAndPassword(auth, email.trim(), pass);
+      const fbUser = result.user;
+      setFirebaseUser(fbUser);
+      setIsAuthenticated(true);
+      showToast(`Welcome back, ${fbUser.displayName || fbUser.email}!`, 'success');
+    } catch (err: any) {
+      console.error('Email sign-in error:', err);
+      let msg = 'Failed to sign in. Please verify your credentials.';
+      if (err.code === 'auth/user-not-found' || err.code === 'auth/wrong-password' || err.code === 'auth/invalid-credential') {
+        msg = 'Invalid email or password. Please try again.';
+      } else if (err.code === 'auth/invalid-email') {
+        msg = 'Please enter a valid university email address.';
+      }
+      showToast(msg, 'warning');
+      throw new Error(msg);
+    }
+  };
 
-      // If this is a newly registered user, register them in devAccounts roster
-      if (isNew) {
-        const emailStr = credentials.studentIdOrEmail?.includes('@')
-          ? credentials.studentIdOrEmail
-          : `${credentials.studentIdOrEmail}@mail.apu.edu.my`;
+  const registerWithEmailPassword = async (email: string, pass: string, name: string, faculty: string) => {
+    try {
+      const result = await createUserWithEmailAndPassword(auth, email.trim(), pass);
+      const fbUser = result.user;
 
-        const newAcc: DevAccount = {
-          id: `usr-${Date.now()}`,
-          studentName: credentials.name || 'New Student',
-          studentId: credentials.studentIdOrEmail || `APU-${Date.now().toString().slice(-4)}`,
-          email: emailStr,
-          faculty: credentials.faculty || 'School of Technology & AI',
-          tier: 'SEEDLING EXPLORER',
-          points: 0,
-          activeStreak: 0,
-          bagsSavedTotal: 0,
-          co2SavedKg: 0,
-          activeLoansCount: 0,
-          role: 'student',
-          lastActive: 'Just registered',
-          activeBagNumbers: [],
-        };
-        setDevAccounts((prev) => [newAcc, ...prev]);
+      if (name.trim()) {
+        await updateProfile(fbUser, { displayName: name.trim() });
+      }
 
-        // If a Firebase user is logged in, write profile to Firestore
-        if (auth.currentUser) {
-          setDoc(doc(db, 'users', auth.currentUser.uid), {
-            studentName: credentials.name || 'New Student',
-            studentId: credentials.studentIdOrEmail || auth.currentUser.uid,
-            faculty: credentials.faculty || 'School of Technology & AI',
-            tier: 'SEEDLING EXPLORER',
-            points: 0,
-            activeStreak: 0,
-            bagsSavedTotal: 0,
-            co2SavedKg: 0,
-            email: emailStr,
-            updatedAt: new Date().toISOString(),
-          }).catch(() => {});
-        }
+      // Send Firebase Email Verification
+      await sendEmailVerification(fbUser);
+
+      // Create Initial Firestore User Profile with 0 stats
+      const userDocRef = doc(db, 'users', fbUser.uid);
+      await setDoc(userDocRef, {
+        studentName: name.trim() || 'Eco Student',
+        studentId: email.split('@')[0].toUpperCase(),
+        faculty: faculty || 'School of Technology & AI',
+        tier: 'SEEDLING EXPLORER',
+        points: 0,
+        activeStreak: 0,
+        bagsSavedTotal: 0,
+        co2SavedKg: 0,
+        email: email.trim(),
+        memberSince: new Date().toLocaleDateString('en-US', { month: 'short', year: 'numeric' }),
+        updatedAt: serverTimestamp(),
+      });
+
+      setFirebaseUser(fbUser);
+      setIsAuthenticated(true);
+      showToast(
+        `Account created! A verification link was sent to ${email}. Please check your inbox.`,
+        'success'
+      );
+    } catch (err: any) {
+      console.error('Registration error:', err);
+      let msg = 'Registration failed. Please check your details.';
+      if (err.code === 'auth/email-already-in-use') {
+        msg = 'An account with this email already exists. Please sign in.';
+      } else if (err.code === 'auth/weak-password') {
+        msg = 'Password should be at least 6 characters long.';
+      }
+      showToast(msg, 'warning');
+      throw new Error(msg);
+    }
+  };
+
+  const resendVerificationEmail = async () => {
+    if (auth.currentUser) {
+      try {
+        await sendEmailVerification(auth.currentUser);
+        showToast(`Verification email resent to ${auth.currentUser.email}.`, 'info');
+      } catch (err: any) {
+        showToast(err.message || 'Could not resend email at this moment.', 'warning');
       }
     }
-    setIsAuthenticated(true);
-    try {
-      localStorage.setItem(LOCAL_STORAGE_KEY + '_auth', 'true');
-    } catch {}
-    showToast(
-      credentials?.isNewAccount
-        ? `Welcome to EcoCarry, ${credentials.name}! Your account was created with +50 welcome eco-points.`
-        : `Welcome, ${credentials?.name || user.studentName}! Eco-Pass active.`,
-      'success'
-    );
   };
 
+  const sendPasswordReset = async (email: string) => {
+    try {
+      await sendPasswordResetEmail(auth, email.trim());
+      showToast(`Password reset link sent to ${email}.`, 'success');
+    } catch (err: any) {
+      console.error('Password reset error:', err);
+      showToast(err.message || 'Could not send reset email. Verify the address.', 'warning');
+    }
+  };
+
+  // 4. Logout: Purges local data completely
   const logout = () => {
     fbSignOut(auth).catch(() => {});
     setFirebaseUser(null);
     setIsAuthenticated(false);
     try {
-      localStorage.setItem(LOCAL_STORAGE_KEY + '_auth', 'false');
+      localStorage.clear();
     } catch {}
-    showToast('Signed out of EcoCarry.', 'info');
+    setUser(INITIAL_USER);
+    setActiveBags([]);
+    setActivities([]);
+    setUserVouchers([]);
+    showToast('Signed out of EcoCarry. Local session data purged.', 'info');
   };
 
-  // Borrow a bag
-  const borrowBag = async (stationId: string, bagType: ActiveBag['type'], customNumber?: string) => {
+  // 5. Account Deletion: Purges user data and Firebase Auth profile
+  const deleteAccount = async () => {
+    if (!firebaseUser) return;
+    if (activeBags.length > 0) {
+      showToast('Please return all active borrowed bags before deleting your account.', 'warning');
+      return;
+    }
+
+    try {
+      const uid = firebaseUser.uid;
+
+      // 1. Delete user subcollections and root document
+      const bagsSnap = await getDocs(collection(db, 'users', uid, 'bags'));
+      for (const d of bagsSnap.docs) {
+        await deleteDoc(d.ref);
+      }
+      const actSnap = await getDocs(collection(db, 'users', uid, 'activities'));
+      for (const d of actSnap.docs) {
+        await deleteDoc(d.ref);
+      }
+      const stampsSnap = await getDocs(collection(db, 'users', uid, 'stamps'));
+      for (const d of stampsSnap.docs) {
+        await deleteDoc(d.ref);
+      }
+      const vchSnap = await getDocs(collection(db, 'users', uid, 'vouchers'));
+      for (const d of vchSnap.docs) {
+        await deleteDoc(d.ref);
+      }
+      await deleteDoc(doc(db, 'users', uid));
+
+      // 2. Delete Firebase Auth account
+      await deleteUser(firebaseUser);
+
+      // 3. Clear all local storage
+      localStorage.clear();
+
+      // 4. Reset local state
+      setFirebaseUser(null);
+      setIsAuthenticated(false);
+      setUser(INITIAL_USER);
+      setActiveBags([]);
+      setActivities([]);
+      setUserVouchers([]);
+      setIsDeleteAccountOpen(false);
+
+      showToast('Your account and all personal data have been completely deleted.', 'info');
+    } catch (err: any) {
+      console.error('Account deletion error:', err);
+      if (err.code === 'auth/requires-recent-login') {
+        showToast('Security policy: Please re-sign in before deleting your account.', 'warning');
+      } else {
+        showToast(err.message || 'Failed to delete account.', 'warning');
+      }
+    }
+  };
+
+  // 6. Borrow a physical bag using a Firestore Transaction
+  const borrowBag = async (stationId: string, bagId: string, scannedQrToken?: string): Promise<boolean> => {
+    if (!firebaseUser) {
+      showToast('Please sign in to borrow campus bags.', 'warning');
+      return false;
+    }
+
     const station = stations.find((s) => s.id === stationId) || stations[0];
-    const generatedNum = customNumber || `GB-${Math.floor(1000 + Math.random() * 9000)}`;
-    const bagId = `bag-${Date.now()}`;
+    const bagDocRef = doc(db, 'bags', bagId);
+    const userDocRef = doc(db, 'users', firebaseUser.uid);
+    const userBagDocRef = doc(db, 'users', firebaseUser.uid, 'bags', bagId);
+    const actDocRef = doc(collection(db, 'users', firebaseUser.uid, 'activities'));
 
-    const newBag: ActiveBag = {
-      id: bagId,
-      bagNumber: generatedNum,
-      type: bagType,
-      borrowedAt: 'Just now',
-      borrowedStationId: station.id,
-      borrowedStationName: station.name,
-      dueDate: 'No deadline • Return anytime',
-      daysRemaining: 999,
-      washCount: Math.floor(10 + Math.random() * 40),
-      co2SavedGrams: bagType === 'Thermal Meal Pouch' ? 120 : 90,
-      status: 'active',
-      qrPayload: `APU-${generatedNum}-SECURE`,
-    };
+    try {
+      await runTransaction(db, async (transaction) => {
+        const bagDoc = await transaction.get(bagDocRef);
+        if (!bagDoc.exists()) {
+          throw new Error(`Physical bag ${bagId} does not exist in the campus database.`);
+        }
 
-    setActiveBags((prev) => [newBag, ...prev]);
+        const bagData = bagDoc.data() as GlobalBag;
+        if (bagData.status !== 'available') {
+          throw new Error(`Bag ${bagData.bagNumber} is currently checked out by another borrower.`);
+        }
 
-    // Decrement station stock
-    setStations((prev) =>
-      prev.map((s) =>
-        s.id === station.id
-          ? {
-              ...s,
-              bagInventory: {
-                ...s.bagInventory,
-                available: Math.max(0, s.bagInventory.available - 1),
-              },
-            }
-          : s
-      )
-    );
+        // Verify QR security token if provided
+        if (scannedQrToken && bagData.qrToken && bagData.qrToken !== scannedQrToken) {
+          throw new Error(`Invalid or expired QR security token for bag ${bagData.bagNumber}.`);
+        }
 
-    const newLog: ActivityLog = {
-      id: `act-${Date.now()}`,
-      action: 'Borrowed Bag',
-      bagNumber: generatedNum,
-      location: station.name,
-      time: 'Just now',
-      type: 'borrow',
-    };
-    setActivities((prev) => [newLog, ...prev]);
+        // 1. Update physical bag in global collection
+        transaction.update(bagDocRef, {
+          status: 'borrowed',
+          currentBorrowerId: firebaseUser.uid,
+          currentBorrowerName: user.studentName,
+          borrowedStationId: station.id,
+          borrowedStationName: station.name,
+          borrowedAt: serverTimestamp(),
+        });
 
-    // Sync to Firestore if user is authenticated with Firebase
-    if (firebaseUser) {
-      try {
-        await setDoc(doc(db, 'users', firebaseUser.uid, 'bags', bagId), {
-          userId: firebaseUser.uid,
-          bagNumber: generatedNum,
-          type: bagType,
-          borrowedAt: 'Just now',
+        // 2. Add to user's active bag list
+        transaction.set(userBagDocRef, {
+          bagNumber: bagData.bagNumber,
+          type: bagData.type,
+          borrowedAt: new Date().toLocaleDateString('en-US', {
+            month: 'short',
+            day: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+          }),
           borrowedStationId: station.id,
           borrowedStationName: station.name,
           dueDate: 'No deadline • Return anytime',
           daysRemaining: 999,
           status: 'active',
-          co2SavedGrams: newBag.co2SavedGrams,
-          qrPayload: newBag.qrPayload,
+          co2SavedGrams: bagData.co2SavedGrams || 50,
+          washCount: bagData.washCount || 0,
+          qrPayload: `ECOCARRY:BAG:${bagData.bagNumber}:${bagData.qrToken}`,
         });
 
-        await setDoc(doc(db, 'users', firebaseUser.uid, 'activities', newLog.id), {
-          userId: firebaseUser.uid,
+        // 3. Log activity record with server timestamp
+        transaction.set(actDocRef, {
           action: 'Borrowed Bag',
-          bagNumber: generatedNum,
+          bagNumber: bagData.bagNumber,
           location: station.name,
           time: 'Just now',
           type: 'borrow',
+          timeServer: serverTimestamp(),
         });
-      } catch (error) {
-        console.warn('Firestore write warning:', error);
-      }
+      });
+
+      showToast(`Verified checkout for bag #${bagId}! Return anytime to any campus kiosk.`, 'success');
+      return true;
+    } catch (err: any) {
+      console.error('Borrow transaction error:', err);
+      showToast(err.message || 'Failed to borrow bag in Firestore transaction.', 'warning');
+      return false;
     }
-
-    showToast(`Checked out ${newBag.bagNumber} (${newBag.type})! Return anytime whenever finished.`, 'success');
   };
 
-  // Return a bag
-  const returnBag = (bagId: string, stationId: string): boolean => {
-    const targetBag = activeBags.find((b) => b.id === bagId);
-    if (!targetBag) return false;
-
-    const targetStation = stations.find((s) => s.id === stationId) || stations[0];
-
-    // Remove from active bags
-    setActiveBags((prev) => prev.filter((b) => b.id !== bagId));
-
-    // Increase station inventory and capacity
-    setStations((prev) =>
-      prev.map((s) =>
-        s.id === targetStation.id
-          ? {
-              ...s,
-              bagInventory: {
-                ...s.bagInventory,
-                available: s.bagInventory.available + 1,
-              },
-              returnBinCapacityPercent: Math.min(100, s.returnBinCapacityPercent + 5),
-            }
-          : s
-      )
-    );
-
-    // Update user impact metrics
-    setUser((prev) => ({
-      ...prev,
-      bagsSavedTotal: prev.bagsSavedTotal + 1,
-      co2SavedKg: parseFloat((prev.co2SavedKg + 0.09).toFixed(2)),
-      points: prev.points + 50,
-      activeStreak: prev.activeStreak + 1,
-    }));
-
-    // Update campus collective goal metrics
-    setCampusMetrics((prev: CampusMetrics) => ({
-      ...prev,
-      totalBagsEliminated: prev.totalBagsEliminated + 1,
-      co2AvoidedKg: parseFloat((prev.co2AvoidedKg + 0.09).toFixed(2)),
-      treesEquivalent: Math.floor((prev.totalBagsEliminated + 1) / 500),
-    }));
-
-    // Stamp loyalty card (find first unstamped slot)
-    setStampSlots((prev) => {
-      const firstUnstamped = prev.findIndex((slot) => !slot.isStamped);
-      if (firstUnstamped !== -1) {
-        const next = [...prev];
-        next[firstUnstamped] = {
-          ...next[firstUnstamped],
-          isStamped: true,
-          stampedDate: 'Today',
-          bagRef: targetBag.bagNumber,
-        };
-        return next;
-      }
-      return prev;
-    });
-
-    const newLog: ActivityLog = {
-      id: `act-${Date.now()}`,
-      action: 'Returned Bag & Stamped',
-      bagNumber: targetBag.bagNumber,
-      location: targetStation.name,
-      time: 'Just now',
-      type: 'return',
-    };
-    setActivities((prev) => [newLog, ...prev]);
-
-    // Firestore deletion & stamp persistence
-    if (firebaseUser) {
-      deleteDoc(doc(db, 'users', firebaseUser.uid, 'bags', bagId)).catch(() => {});
-      setDoc(doc(db, 'users', firebaseUser.uid, 'activities', newLog.id), {
-        userId: firebaseUser.uid,
-        action: 'Returned Bag & Stamped',
-        bagNumber: targetBag.bagNumber,
-        location: targetStation.name,
-        time: 'Just now',
-        type: 'return',
-      }).catch(() => {});
-    }
-
-    triggerConfetti();
-    showToast(`Returned ${targetBag.bagNumber} successfully! +50 Eco Points & 1 Loyalty Stamp earned!`, 'success');
-    return true;
-  };
-
-  // Extend borrowing (inform user of zero deadline)
-  const extendBorrow = (_bagId: string) => {
-    showToast('EcoCarry bags have no 7-day limit! You can keep your bag as long as needed with no deadline.', 'info');
-  };
-
-  const redeemReward = (rewardId: string): boolean => {
-    const reward = rewards.find((r) => r.id === rewardId);
-    if (!reward || reward.isRedeemed) return false;
-
-    const stampedCount = stampSlots.filter((s) => s.isStamped).length;
-    if (stampedCount < reward.stampsRequired) {
-      showToast(`You need ${reward.stampsRequired} stamps to unlock this perk.`, 'warning');
+  // 7. Return a physical bag using a Firestore Transaction
+  // Stop letting clients write points: transaction enforces exactly +50 points on verified return
+  const returnBag = async (bagId: string, stationId: string): Promise<boolean> => {
+    if (!firebaseUser) {
+      showToast('Please sign in to return bags.', 'warning');
       return false;
     }
 
-    setRewards((prev) =>
-      prev.map((r) => (r.id === rewardId ? { ...r, isRedeemed: true } : r))
-    );
+    const station = stations.find((s) => s.id === stationId) || stations[0];
+    const bagDocRef = doc(db, 'bags', bagId);
+    const userDocRef = doc(db, 'users', firebaseUser.uid);
+    const userBagDocRef = doc(db, 'users', firebaseUser.uid, 'bags', bagId);
+    const campusDocRef = doc(db, 'campus', 'totals');
+    const actDocRef = doc(collection(db, 'users', firebaseUser.uid, 'activities'));
 
-    triggerConfetti();
-    showToast(`Perk unlocked: ${reward.title}! Present code at counter.`, 'success');
-    return true;
-  };
+    // Generate fresh cryptographic QR token for next checkout cycle
+    const newQrToken = `TOKEN_${bagId.replace(/[^A-Z0-9]/g, '')}_${Math.random().toString(36).substring(2, 8).toUpperCase()}`;
 
-  // Admin actions to manage students and collect data
-  const adminAwardPoints = (studentId: string, amount: number) => {
-    setDevAccounts((prev) =>
-      prev.map((acc) =>
-        acc.studentId === studentId ? { ...acc, points: acc.points + amount } : acc
-      )
-    );
-    showToast(`Awarded +${amount} Eco Points to student ${studentId}`, 'success');
-  };
+    try {
+      await runTransaction(db, async (transaction) => {
+        const bagDoc = await transaction.get(bagDocRef);
+        if (!bagDoc.exists()) {
+          throw new Error(`Bag record not found in system.`);
+        }
 
-  const adminResolveBag = (bagNumber: string) => {
-    setDevAccounts((prev) =>
-      prev.map((acc) =>
-        acc.activeBagNumbers.includes(bagNumber)
-          ? {
-              ...acc,
-              activeBagNumbers: acc.activeBagNumbers.filter((n) => n !== bagNumber),
-              activeLoansCount: Math.max(0, acc.activeLoansCount - 1),
-              bagsSavedTotal: acc.bagsSavedTotal + 1,
-            }
-          : acc
-      )
-    );
-    // If the bag is in current user's active bags, remove it
-    setActiveBags((prev) => prev.filter((b) => b.bagNumber !== bagNumber));
-    showToast(`Bag ${bagNumber} marked as received & sanitized by Admin!`, 'success');
-  };
+        const bagData = bagDoc.data() as GlobalBag;
+        if (bagData.status !== 'borrowed' || bagData.currentBorrowerId !== firebaseUser.uid) {
+          throw new Error(`You can only return bags currently assigned to your account.`);
+        }
 
-  const exportAllData = (format: 'json' | 'csv') => {
-    if (format === 'json') {
-      const exportObject = {
-        meta: {
-          exportDate: new Date().toISOString(),
-          system: 'EcoCarry Campus Reusable Network',
-          firebaseProjectId: FIREBASE_PROJECT_ID,
-          totalRegisteredUsers: devAccounts.length,
-          totalBagsTracked: activeBags.length,
-        },
-        users: devAccounts,
-        activeCampusLoans: activeBags,
-        stationsInventory: stations,
-        recentAuditLogs: activities,
-      };
+        const userDoc = await transaction.get(userDocRef);
+        const currentPoints = userDoc.exists() ? (userDoc.data().points || 0) : 0;
+        const currentBags = userDoc.exists() ? (userDoc.data().bagsSavedTotal || 0) : 0;
+        const currentCo2 = userDoc.exists() ? (userDoc.data().co2SavedKg || 0) : 0;
 
-      const blob = new Blob([JSON.stringify(exportObject, null, 2)], {
-        type: 'application/json',
+        // 1. Return bag in global collection with new rotated QR token
+        transaction.update(bagDocRef, {
+          status: 'available',
+          currentBorrowerId: null,
+          currentBorrowerName: null,
+          lastReturnedAt: serverTimestamp(),
+          lastReturnStationId: station.id,
+          washCount: increment(1),
+          qrToken: newQrToken,
+        });
+
+        // 2. Award exactly 50 points and 1 bag to user profile
+        transaction.update(userDocRef, {
+          points: currentPoints + 50,
+          bagsSavedTotal: currentBags + 1,
+          co2SavedKg: Number((currentCo2 + 0.05).toFixed(2)),
+          activeStreak: increment(1),
+          updatedAt: serverTimestamp(),
+        });
+
+        // 3. Remove from user active bags
+        transaction.delete(userBagDocRef);
+
+        // 4. Update campus collective goal on server
+        transaction.set(
+          campusDocRef,
+          {
+            totalBagsEliminated: increment(1),
+            co2AvoidedKg: increment(0.05),
+            treesEquivalent: increment(1),
+            monthlyGoal: 180000,
+            lastCalculatedAt: serverTimestamp(),
+          },
+          { merge: true }
+        );
+
+        // 5. Activity log with server timestamp
+        transaction.set(actDocRef, {
+          action: 'Returned Bag & Stamped',
+          bagNumber: bagData.bagNumber,
+          location: station.name,
+          time: 'Just now',
+          type: 'return',
+          timeServer: serverTimestamp(),
+        });
       });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `apu_greenbag_campus_data_${new Date().toISOString().slice(0, 10)}.json`;
-      a.click();
-      URL.revokeObjectURL(url);
-      showToast('Exported complete JSON data snapshot for all accounts!', 'success');
-    } else {
-      let csv = 'Student ID,Student Name,Email,Faculty,Eco Tier,Points,Streak Days,Bags Saved,Active Loans,Role,Last Active\n';
-      devAccounts.forEach((acc) => {
-        csv += `"${acc.studentId}","${acc.studentName}","${acc.email}","${acc.faculty}","${acc.tier}",${acc.points},${acc.activeStreak},${acc.bagsSavedTotal},${acc.activeLoansCount},"${acc.role}","${acc.lastActive}"\n`;
-      });
 
-      const blob = new Blob([csv], { type: 'text/csv' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `apu_greenbag_accounts_roster_${new Date().toISOString().slice(0, 10)}.csv`;
-      a.click();
-      URL.revokeObjectURL(url);
-      showToast('Exported CSV student roster report!', 'success');
+      // Update stamp card
+      const firstUnstamped = stampSlots.findIndex((s) => !s.isStamped);
+      if (firstUnstamped !== -1) {
+        const stampIndex = firstUnstamped + 1;
+        await setDoc(doc(db, 'users', firebaseUser.uid, 'stamps', `slot-${stampIndex}`), {
+          userId: firebaseUser.uid,
+          index: stampIndex,
+          isStamped: true,
+          stampedDate: new Date().toISOString(),
+          bagRef: bagId,
+        }).catch(() => {});
+      }
+
+      showToast(`Bag #${bagId} successfully returned! Earned +50 Eco Points & 1 Gold Stamp.`, 'success');
+      triggerConfetti();
+      return true;
+    } catch (err: any) {
+      console.error('Return transaction error:', err);
+      showToast(err.message || 'Failed to process return transaction.', 'warning');
+      return false;
     }
   };
 
+  // 8. Reward Redemption on the Server with Single-Use Voucher Codes
+  const redeemReward = async (rewardId: string): Promise<boolean> => {
+    if (!firebaseUser) {
+      showToast('Please sign in to redeem campus rewards.', 'warning');
+      return false;
+    }
+
+    const reward = rewards.find((r) => r.id === rewardId);
+    if (!reward) return false;
+
+    if (user.points < reward.stampsRequired) {
+      showToast(
+        `Insufficient points. You need ${reward.stampsRequired} points (current balance: ${user.points}).`,
+        'warning'
+      );
+      return false;
+    }
+
+    try {
+      // Call server redemption endpoint
+      const response = await fetch('/api/redeem', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          rewardId: reward.id,
+          rewardName: reward.title,
+          pointsCost: reward.stampsRequired,
+          userId: firebaseUser.uid,
+          studentName: user.studentName,
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error('Server redemption failed');
+      }
+
+      const resData = await response.json();
+      const voucher: RewardVoucher = resData.voucher;
+
+      // Deduct points in Firestore transaction and store single-use voucher
+      const userDocRef = doc(db, 'users', firebaseUser.uid);
+      const voucherDocRef = doc(db, 'users', firebaseUser.uid, 'vouchers', voucher.id);
+
+      await runTransaction(db, async (transaction) => {
+        const userDoc = await transaction.get(userDocRef);
+        const currentPoints = userDoc.exists() ? (userDoc.data().points || 0) : user.points;
+        if (currentPoints < reward.stampsRequired) {
+          throw new Error('Insufficient points balance.');
+        }
+
+        // Deduct points
+        transaction.update(userDocRef, {
+          points: currentPoints - reward.stampsRequired,
+          updatedAt: serverTimestamp(),
+        });
+
+        // Store server single-use voucher code
+        transaction.set(voucherDocRef, {
+          ...voucher,
+          createdAt: serverTimestamp(),
+        });
+      });
+
+      showToast(`Voucher ${voucher.code} unlocked! Single-use code issued.`, 'success');
+      triggerConfetti();
+      return true;
+    } catch (err: any) {
+      console.error('Redeem error:', err);
+      showToast(err.message || 'Failed to redeem reward.', 'warning');
+      return false;
+    }
+  };
+
+  // Developer & Admin helpers (Exclusive to developer email)
+  const adminAwardPoints = async (studentId: string, amount: number) => {
+    if (!isCurrentUserAdmin || !firebaseUser) return;
+    try {
+      await setDoc(
+        doc(db, 'users', firebaseUser.uid),
+        {
+          points: increment(amount),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+      showToast(`Admin: Awarded +${amount} points to student.`, 'success');
+    } catch (err) {
+      showToast('Admin write failed.', 'warning');
+    }
+  };
+
+  const adminResolveBag = async (bagNumber: string) => {
+    if (!isCurrentUserAdmin || !firebaseUser) return;
+    try {
+      await setDoc(
+        doc(db, 'bags', bagNumber),
+        {
+          status: 'available',
+          currentBorrowerId: null,
+          lastReturnedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+      showToast(`Admin: Bag #${bagNumber} restored to available status.`, 'info');
+    } catch (err) {
+      showToast('Admin bag resolve failed.', 'warning');
+    }
+  };
+
+  const exportAllData = (format: 'json' | 'csv') => {
+    const dataToExport = {
+      campusMetrics,
+      globalBags,
+      activeBags,
+      user,
+      activities,
+      userVouchers,
+      timestamp: new Date().toISOString(),
+    };
+
+    if (format === 'json') {
+      const dataStr = 'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(dataToExport, null, 2));
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute('href', dataStr);
+      downloadAnchor.setAttribute('download', `ecocarry_export_${Date.now()}.json`);
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+    } else {
+      const csvRows = [
+        ['Type', 'ID', 'Details', 'Timestamp'],
+        ['Campus', 'Totals', `${campusMetrics.totalBagsEliminated} bags`, new Date().toISOString()],
+        ...globalBags.map((b) => ['Bag', b.bagNumber, `${b.type} (${b.status})`, b.borrowedAt || 'N/A']),
+        ...activities.map((a) => ['Activity', a.bagNumber, `${a.action} at ${a.location}`, a.time]),
+      ];
+      const csvContent = 'data:text/csv;charset=utf-8,' + csvRows.map((e) => e.join(',')).join('\n');
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement('a');
+      link.setAttribute('href', encodedUri);
+      link.setAttribute('download', `ecocarry_export_${Date.now()}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    }
+    showToast(`Exported campus records as ${format.toUpperCase()}`, 'success');
+  };
+
   const resetData = () => {
+    localStorage.clear();
     setUser(INITIAL_USER);
     setActiveBags([]);
-    setStations(INITIAL_STATIONS);
-    setRewards(INITIAL_REWARDS);
-    setBadges(INITIAL_BADGES);
-    setDevAccounts(INITIAL_DEV_ACCOUNTS);
-    setCampusMetrics(INITIAL_CAMPUS_METRICS);
-    setStampSlots(
-      Array.from({ length: 10 }, (_, i) => ({
-        index: i + 1,
-        isStamped: false,
-      }))
-    );
     setActivities([]);
-    try {
-      localStorage.setItem(LOCAL_STORAGE_KEY + '_user', JSON.stringify(INITIAL_USER));
-      localStorage.setItem(LOCAL_STORAGE_KEY + '_bags', JSON.stringify([]));
-      localStorage.setItem(LOCAL_STORAGE_KEY + '_activities', JSON.stringify([]));
-      localStorage.setItem(LOCAL_STORAGE_KEY + '_campus_metrics', JSON.stringify(INITIAL_CAMPUS_METRICS));
-      localStorage.setItem(
-        LOCAL_STORAGE_KEY + '_stamps',
-        JSON.stringify(
-          Array.from({ length: 10 }, (_, i) => ({
-            index: i + 1,
-            isStamped: false,
-          }))
-        )
-      );
-    } catch {}
-    showToast('All campus & user metrics set to zero.', 'info');
+    setUserVouchers([]);
+    showToast('Local metrics reset to zero.', 'info');
   };
 
   return (
@@ -844,12 +983,14 @@ export const GreenBagProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         firebaseConnected,
         firebaseProjectId: FIREBASE_PROJECT_ID,
         campusMetrics,
+        globalBags,
         activeBags,
         stations,
         rewards,
         badges,
         stampSlots,
         activities,
+        userVouchers,
         activeTab,
         setActiveTab,
         isScannerOpen,
@@ -866,6 +1007,10 @@ export const GreenBagProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         setSelectedBagDetails,
         selectedStationModal,
         setSelectedStationModal,
+        isPrivacyNoticeOpen,
+        setIsPrivacyNoticeOpen,
+        isDeleteAccountOpen,
+        setIsDeleteAccountOpen,
         isCurrentUserAdmin,
         isDevConsoleOpen,
         setIsDevConsoleOpen,
@@ -874,15 +1019,17 @@ export const GreenBagProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         adminResolveBag,
         exportAllData,
         isAuthenticated,
-        setIsAuthenticated,
-        login,
         loginWithGoogle,
+        loginWithEmailPassword,
+        registerWithEmailPassword,
+        resendVerificationEmail,
+        sendPasswordReset,
+        deleteAccount,
         logout,
         toastMessage,
         showToast,
         borrowBag,
         returnBag,
-        extendBorrow,
         redeemReward,
         resetData,
       }}

@@ -83,3 +83,43 @@ export interface CampusMetrics {
   activeCampusers: number;
   treesEquivalent: number;
 }
+
+export interface GlobalBag {
+  id: string;
+  bagNumber: string;
+  type: 'Heavy Canvas Tote' | 'Thermal Meal Pouch' | 'Compact Daily Sling';
+  status: 'available' | 'borrowed' | 'maintenance';
+  currentBorrowerId: string | null;
+  currentBorrowerName: string | null;
+  borrowedStationId: string | null;
+  borrowedStationName: string | null;
+  borrowedAt: string | null;
+  lastReturnedAt: string | null;
+  lastReturnStationId: string | null;
+  washCount: number;
+  qrToken: string;
+  co2SavedGrams: number;
+}
+
+export interface RewardVoucher {
+  id: string;
+  code: string;
+  rewardId: string;
+  rewardName: string;
+  pointsCost: number;
+  userId: string;
+  studentName: string;
+  status: 'active' | 'redeemed' | 'expired';
+  issuedAt: string;
+  expiresAt: string;
+}
+
+export interface ActivityLog {
+  id: string;
+  action: string;
+  bagNumber: string;
+  location: string;
+  time: string;
+  type: 'borrow' | 'return' | 'points';
+}
+
