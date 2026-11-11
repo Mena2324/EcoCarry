@@ -146,7 +146,7 @@ export const ScannerModal: React.FC = () => {
 
   // Process decoded QR text
   const handleDecodedQr = (rawText: string) => {
-    // Expected format: ECOCARRY:BAG:<bagId>:<token> or JSON or plain bag number (e.g. GB-1001)
+    // Expected format: ECOCARRY:BAG:<bagId>:<token> or plain bag number (e.g. GB-0001)
     let bagId = '';
     let token = '';
 
@@ -154,45 +154,58 @@ export const ScannerModal: React.FC = () => {
       const parts = rawText.split(':');
       bagId = parts[2] || '';
       token = parts[3] || '';
-    } else if (rawText.includes('GB-')) {
+    } else if (/GB-\d+/i.test(rawText)) {
       const match = rawText.match(/GB-\d+/i);
       bagId = match ? match[0].toUpperCase() : rawText.trim().toUpperCase();
     } else {
       bagId = rawText.trim().toUpperCase();
     }
 
+    // Normalize to official format: GB-0001 through GB-0200
+    if (/^GB-\d+$/i.test(bagId)) {
+      const digits = bagId.replace('GB-', '');
+      bagId = `GB-${digits.padStart(4, '0')}`;
+    }
+
     if (scannerMode === 'borrow') {
-      // Find bag in global registry
+      // Find bag in the 200 authorized global registry
       const targetBag = globalBags.find(
         (b) => b.id.toUpperCase() === bagId || b.bagNumber.toUpperCase() === bagId
       );
 
-      const stationId = selectedStationForBorrow || stations[0]?.id || 'st-1';
-
-      if (targetBag) {
-        if (targetBag.status === 'borrowed') {
-          showToast(`Bag ${targetBag.bagNumber} is currently checked out by another borrower.`, 'warning');
-          return;
-        }
-        stopCamera();
-        setScannedBagCandidate({
-          bagId: targetBag.id,
-          bagNumber: targetBag.bagNumber,
-          type: targetBag.type,
-          stationId,
-          qrToken: token || targetBag.qrToken,
-        });
-      } else {
-        // If not found in loaded array, prepare bagId candidate to check in Firestore transaction
-        stopCamera();
-        setScannedBagCandidate({
-          bagId,
-          bagNumber: bagId,
-          type: 'Heavy Canvas Tote',
-          stationId,
-          qrToken: token,
-        });
+      if (!targetBag) {
+        showToast(
+          `Unrecognized QR Code "${bagId}". Only official EcoCarry QR codes (#GB-0001 to #GB-0200) are accepted.`,
+          'warning'
+        );
+        return;
       }
+
+      if (targetBag.status === 'borrowed' || targetBag.currentBorrowerId) {
+        showToast(
+          `Bag #${targetBag.bagNumber} is already active and linked to an account. It cannot be used again until reported as missing or returned.`,
+          'warning'
+        );
+        return;
+      }
+
+      if (targetBag.status === 'missing') {
+        showToast(
+          `Bag #${targetBag.bagNumber} is currently flagged as missing. Please return it to campus facilities.`,
+          'warning'
+        );
+        return;
+      }
+
+      const stationId = selectedStationForBorrow || stations[0]?.id || 'st-1';
+      stopCamera();
+      setScannedBagCandidate({
+        bagId: targetBag.id,
+        bagNumber: targetBag.bagNumber,
+        type: targetBag.type,
+        stationId,
+        qrToken: token || targetBag.qrToken,
+      });
     } else {
       // Return mode: Match with active bags
       const myBag = activeBags.find(
@@ -327,37 +340,19 @@ export const ScannerModal: React.FC = () => {
             {scannerMode === 'borrow' ? (
               <div className="w-full mt-6 bg-[#FAF9F5] text-[#14261C] p-4 rounded-[20px] shadow-tactile-md">
                 <span className="text-[11px] font-bold uppercase tracking-wider text-[#186049] block mb-2">
-                  Verify Physical Bag Code
+                  Verify Scanned QR Code
                 </span>
 
-                {/* Available Bags Quick Selector if scanning offline */}
-                <div className="mb-3">
-                  <span className="text-[10px] text-[#2D3E35] font-semibold block mb-1.5">
-                    Physical Bags in Circulation:
-                  </span>
-                  <div className="grid grid-cols-3 gap-1.5 max-h-24 overflow-y-auto">
-                    {globalBags
-                      .filter((b) => b.status === 'available')
-                      .slice(0, 6)
-                      .map((b) => (
-                        <button
-                          key={b.id}
-                          onClick={() => handleDecodedQr(b.bagNumber)}
-                          className="p-1.5 rounded-lg bg-[#def3e3] hover:bg-[#cbeed4] text-center border border-[#E2DEC2] transition-colors"
-                        >
-                          <span className="block text-xs font-bold text-[#186049]">#{b.bagNumber}</span>
-                          <span className="text-[9px] text-[#2D3E35] block truncate">{b.type.split(' ')[0]}</span>
-                        </button>
-                      ))}
-                  </div>
-                </div>
+                <p className="text-[11px] text-[#2D3E35] mb-3 leading-relaxed">
+                  Hold your camera up to the physical EcoCarry QR label, or manually type the scanned ID below.
+                </p>
 
-                {/* Manual Bag ID Entry */}
+                {/* Manual Scanned Code Verification */}
                 <form onSubmit={handleManualSubmit}>
                   <div className="relative">
                     <input
                       type="text"
-                      placeholder="Or enter Bag ID (e.g. GB-1001)"
+                      placeholder="Scan result or code (e.g. GB-0001)"
                       value={manualCode}
                       onChange={(e) => setManualCode(e.target.value)}
                       className="w-full h-[48px] rounded-[12px] bg-white border border-[#E2DEC2] focus:border-[2px] focus:border-[#186049] px-3.5 text-xs text-[#14261C] placeholder:text-[#707974] outline-none transition-all"

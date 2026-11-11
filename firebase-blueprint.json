@@ -25,7 +25,7 @@
       "properties": {
         "bagNumber": { "type": "string", "maxLength": 30 },
         "type": { "type": "string", "maxLength": 60 },
-        "status": { "type": "string", "enum": ["available", "borrowed", "maintenance"] },
+        "status": { "type": "string", "enum": ["available", "borrowed", "maintenance", "missing"] },
         "currentBorrowerId": { "type": "string", "maxLength": 128 },
         "currentBorrowerName": { "type": "string", "maxLength": 100 },
         "borrowedStationId": { "type": "string", "maxLength": 50 },
@@ -106,6 +106,26 @@
         "activeCampusers": { "type": "number" }
       },
       "required": ["totalBagsEliminated", "monthlyGoal"]
+    },
+    "campusEvent": {
+      "title": "CampusEvent",
+      "description": "Campus sustainability event or eco campaign",
+      "type": "object",
+      "properties": {
+        "title": { "type": "string", "maxLength": 100 },
+        "description": { "type": "string", "maxLength": 500 },
+        "badgeText": { "type": "string", "maxLength": 50 },
+        "location": { "type": "string", "maxLength": 100 },
+        "bonusPoints": { "type": "number" },
+        "multiplier": { "type": "number" },
+        "status": { "type": "string", "enum": ["draft", "scheduled", "active", "ended"] },
+        "scheduledStart": { "type": "string" },
+        "scheduledEnd": { "type": "string" },
+        "isPublished": { "type": "boolean" },
+        "createdAt": { "type": "string" },
+        "createdBy": { "type": "string", "maxLength": 100 }
+      },
+      "required": ["title", "description", "status", "scheduledStart", "scheduledEnd"]
     }
   },
   "firestore": {
@@ -116,6 +136,10 @@
     "/campus/{metricId}": {
       "schema": "campusTotal",
       "description": "University-wide sustainability impact counters"
+    },
+    "/events/{eventId}": {
+      "schema": "campusEvent",
+      "description": "Scheduled and published campus sustainability campaigns"
     },
     "/users/{userId}": {
       "schema": "user",

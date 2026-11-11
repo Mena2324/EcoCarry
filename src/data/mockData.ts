@@ -1,4 +1,4 @@
-import { ActiveBag, Station, Reward, EcoBadge, UserProfile, CampusMetrics, GlobalBag } from '../types/greenbag';
+import { ActiveBag, Station, Reward, EcoBadge, UserProfile, CampusMetrics, GlobalBag, CampusEcoEvent } from '../types/greenbag';
 
 export const INITIAL_USER: UserProfile = {
   studentName: 'Eco Student',
@@ -23,104 +23,45 @@ export const INITIAL_CAMPUS_METRICS: CampusMetrics = {
 
 export const INITIAL_ACTIVE_BAGS: ActiveBag[] = [];
 
-export const INITIAL_GLOBAL_BAGS: GlobalBag[] = [
-  {
-    id: 'GB-1001',
-    bagNumber: 'GB-1001',
-    type: 'Heavy Canvas Tote',
-    status: 'available',
-    currentBorrowerId: null,
-    currentBorrowerName: null,
-    borrowedStationId: 'st-1',
-    borrowedStationName: 'APU Central Cafeteria',
-    borrowedAt: null,
-    lastReturnedAt: null,
-    lastReturnStationId: 'st-1',
-    washCount: 12,
-    qrToken: 'TOKEN_GB1001_9A2F4B',
-    co2SavedGrams: 50,
-  },
-  {
-    id: 'GB-1002',
-    bagNumber: 'GB-1002',
-    type: 'Thermal Meal Pouch',
-    status: 'available',
-    currentBorrowerId: null,
-    currentBorrowerName: null,
-    borrowedStationId: 'st-1',
-    borrowedStationName: 'APU Central Cafeteria',
-    borrowedAt: null,
-    lastReturnedAt: null,
-    lastReturnStationId: 'st-1',
-    washCount: 8,
-    qrToken: 'TOKEN_GB1002_7C3D8E',
-    co2SavedGrams: 50,
-  },
-  {
-    id: 'GB-1003',
-    bagNumber: 'GB-1003',
-    type: 'Compact Daily Sling',
-    status: 'available',
-    currentBorrowerId: null,
-    currentBorrowerName: null,
-    borrowedStationId: 'st-2',
-    borrowedStationName: 'Student Activity Centre',
-    borrowedAt: null,
-    lastReturnedAt: null,
-    lastReturnStationId: 'st-2',
-    washCount: 15,
-    qrToken: 'TOKEN_GB1003_4E1B9A',
-    co2SavedGrams: 50,
-  },
-  {
-    id: 'GB-1004',
-    bagNumber: 'GB-1004',
-    type: 'Heavy Canvas Tote',
-    status: 'available',
-    currentBorrowerId: null,
-    currentBorrowerName: null,
-    borrowedStationId: 'st-3',
-    borrowedStationName: 'APU Library Ground Floor',
-    borrowedAt: null,
-    lastReturnedAt: null,
-    lastReturnStationId: 'st-3',
-    washCount: 5,
-    qrToken: 'TOKEN_GB1004_2F8C5D',
-    co2SavedGrams: 50,
-  },
-  {
-    id: 'GB-1005',
-    bagNumber: 'GB-1005',
-    type: 'Thermal Meal Pouch',
-    status: 'available',
-    currentBorrowerId: null,
-    currentBorrowerName: null,
-    borrowedStationId: 'st-4',
-    borrowedStationName: 'Faculty of Computing & AI Hub',
-    borrowedAt: null,
-    lastReturnedAt: null,
-    lastReturnStationId: 'st-4',
-    washCount: 19,
-    qrToken: 'TOKEN_GB1005_6A4D2E',
-    co2SavedGrams: 50,
-  },
-  {
-    id: 'GB-1006',
-    bagNumber: 'GB-1006',
-    type: 'Compact Daily Sling',
-    status: 'available',
-    currentBorrowerId: null,
-    currentBorrowerName: null,
-    borrowedStationId: 'st-5',
-    borrowedStationName: 'APU Residences Hall D',
-    borrowedAt: null,
-    lastReturnedAt: null,
-    lastReturnStationId: 'st-5',
-    washCount: 7,
-    qrToken: 'TOKEN_GB1006_3D9A1C',
-    co2SavedGrams: 50,
-  },
+const BAG_TYPES: Array<'Heavy Canvas Tote' | 'Thermal Meal Pouch' | 'Compact Daily Sling'> = [
+  'Heavy Canvas Tote',
+  'Thermal Meal Pouch',
+  'Compact Daily Sling',
 ];
+
+const STATIONS_MAP = [
+  { id: 'st-1', name: 'APU Central Cafeteria' },
+  { id: 'st-2', name: 'Student Activity Centre' },
+  { id: 'st-3', name: 'APU Library Ground Floor' },
+  { id: 'st-4', name: 'Faculty of Computing & AI Hub' },
+  { id: 'st-5', name: 'APU Residences Hall D' },
+  { id: 'st-6', name: 'Sports Complex & Arena' },
+];
+
+export const INITIAL_GLOBAL_BAGS: GlobalBag[] = Array.from({ length: 200 }, (_, i) => {
+  const num = (i + 1).toString().padStart(4, '0');
+  const bagNumber = `GB-${num}`;
+  const type = BAG_TYPES[i % 3];
+  const station = STATIONS_MAP[i % 6];
+  const hexHash = ((i * 9301 + 49297) % 233280).toString(16).toUpperCase();
+  return {
+    id: bagNumber,
+    bagNumber,
+    type,
+    status: 'available' as const,
+    currentBorrowerId: null,
+    currentBorrowerName: null,
+    borrowedStationId: station.id,
+    borrowedStationName: station.name,
+    borrowedAt: null,
+    lastReturnedAt: null,
+    lastReturnStationId: station.id,
+    washCount: 0,
+    qrToken: `TOKEN-${bagNumber}-${hexHash}`,
+    co2SavedGrams: 50,
+  };
+});
+
 
 export const INITIAL_STATIONS: Station[] = [
   {
@@ -463,4 +404,53 @@ export const INITIAL_DEV_ACCOUNTS: DevAccount[] = [
     activeBagNumbers: ['GB-9002'],
   },
 ];
+
+export const INITIAL_CAMPUS_EVENTS: CampusEcoEvent[] = [
+  {
+    id: 'evt-earth-day-2026',
+    title: 'Earth Day Campus Zero-Plastic Week',
+    description: 'Borrow and return any reusable tote or pouch across APU to earn 2x bonus points! Help our university reach 10,000 plastic-free meals this week.',
+    badgeText: '2X ECO POINTS',
+    location: 'All 6 APU Eco Kiosks',
+    bonusPoints: 100,
+    multiplier: 2,
+    status: 'active',
+    scheduledStart: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString(),
+    scheduledEnd: new Date(Date.now() + 6 * 24 * 60 * 60 * 1000).toISOString(),
+    isPublished: true,
+    createdAt: new Date().toISOString(),
+    createdBy: 'menazaki012@gmail.com',
+  },
+  {
+    id: 'evt-exam-blitz-2026',
+    title: 'Exam Season Eco-Refill Blitz',
+    description: 'Thermal pouches returned clean at SAC Lobby or Central Cafeteria receive instant +75 bonus points and expedited UV-C certification.',
+    badgeText: '+75 BONUS PTS',
+    location: 'Central Cafeteria & SAC Lobby',
+    bonusPoints: 75,
+    multiplier: 1,
+    status: 'scheduled',
+    scheduledStart: new Date(Date.now() + 2 * 24 * 60 * 60 * 1000).toISOString(),
+    scheduledEnd: new Date(Date.now() + 9 * 24 * 60 * 60 * 1000).toISOString(),
+    isPublished: false,
+    createdAt: new Date().toISOString(),
+    createdBy: 'menazaki012@gmail.com',
+  },
+  {
+    id: 'evt-world-env-2026',
+    title: 'World Environment Day Inter-Faculty Diversion Trophy',
+    description: 'Compete for the annual APU Green Cup! Faculty with highest reusable bag returns earns 50 trees planted in their faculty name.',
+    badgeText: 'ANNUAL TROPHY',
+    location: 'Campus Wide',
+    bonusPoints: 150,
+    multiplier: 2,
+    status: 'draft',
+    scheduledStart: new Date(Date.now() + 14 * 24 * 60 * 60 * 1000).toISOString(),
+    scheduledEnd: new Date(Date.now() + 21 * 24 * 60 * 60 * 1000).toISOString(),
+    isPublished: false,
+    createdAt: new Date().toISOString(),
+    createdBy: 'menazaki012@gmail.com',
+  },
+];
+
 

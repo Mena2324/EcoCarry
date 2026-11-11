@@ -10,11 +10,14 @@ import {
   ShieldCheck,
   CheckCircle,
   HelpCircle,
+  Megaphone,
+  Calendar,
+  Zap,
 } from 'lucide-react';
 import { INITIAL_LEADERBOARD } from '../data/mockData';
 
 export const CommunityView: React.FC = () => {
-  const { badges, user, campusMetrics } = useGreenBag();
+  const { badges, user, campusMetrics, events } = useGreenBag();
   const [activeLeaderboardTab, setActiveLeaderboardTab] = useState<'individual' | 'faculty'>('individual');
 
   const facultyRankings = [
@@ -24,6 +27,8 @@ export const CommunityView: React.FC = () => {
     { faculty: 'Faculty of Engineering', bags: 22100, activeStudents: 610, rank: 4 },
     { faculty: 'International Relations & Law', bags: 15890, activeStudents: 390, rank: 5 },
   ];
+
+  const visibleEvents = events.filter((e) => e.status !== 'ended');
 
   return (
     <div className="space-y-6 pb-28 pt-2">
@@ -76,6 +81,81 @@ export const CommunityView: React.FC = () => {
           </div>
         </div>
       </div>
+
+      {/* Campus Eco Campaigns & Events List */}
+      {visibleEvents.length > 0 && (
+        <div className="rounded-[20px] bg-[#FAF9F5] border border-[#E2DEC2] p-4 shadow-tactile-sm space-y-3">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Megaphone className="w-5 h-5 text-[#186049]" />
+              <h2 className="text-base font-extrabold text-[#14261C]">Campus Eco Campaigns</h2>
+            </div>
+            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#def3e3] text-[#186049]">
+              Active & Upcoming
+            </span>
+          </div>
+
+          <div className="space-y-2.5">
+            {visibleEvents.map((ev) => {
+              const isLive =
+                ev.status === 'active' ||
+                (ev.isPublished && ev.status !== 'ended') ||
+                (ev.status === 'scheduled' &&
+                  new Date(ev.scheduledStart) <= new Date() &&
+                  new Date(ev.scheduledEnd) >= new Date());
+
+              return (
+                <div
+                  key={ev.id}
+                  className={`p-3.5 rounded-2xl border transition-all ${
+                    isLive
+                      ? 'bg-white border-[#4A943E] shadow-tactile-sm'
+                      : 'bg-white/70 border-[#E2DEC2]'
+                  }`}
+                >
+                  <div className="flex items-start justify-between gap-2">
+                    <div>
+                      <div className="flex items-center gap-1.5 flex-wrap mb-1">
+                        {isLive ? (
+                          <span className="inline-flex items-center gap-1 text-[9px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-[#def3e3] text-[#186049]">
+                            <span className="w-1.5 h-1.5 rounded-full bg-[#4A943E] animate-pulse" />
+                            LIVE NOW
+                          </span>
+                        ) : (
+                          <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-[#FAF9F5] text-[#707974] border border-[#E2DEC2]">
+                            UPCOMING
+                          </span>
+                        )}
+                        <span className="text-[9px] font-bold px-2 py-0.5 rounded-full bg-[#ECE8AF] text-[#186049]">
+                          {ev.badgeText}
+                        </span>
+                        {ev.multiplier > 1 && (
+                          <span className="text-[9px] font-bold text-[#D98327] flex items-center gap-0.5">
+                            <Zap className="w-3 h-3 fill-[#D98327]" />
+                            {ev.multiplier}x Points
+                          </span>
+                        )}
+                      </div>
+                      <h3 className="text-xs font-extrabold text-[#14261C]">{ev.title}</h3>
+                      <p className="text-[11px] text-[#2D3E35] mt-0.5 leading-relaxed">
+                        {ev.description}
+                      </p>
+                    </div>
+                  </div>
+
+                  <div className="mt-2 pt-2 border-t border-[#E2DEC2]/60 flex items-center justify-between text-[10px] text-[#707974]">
+                    <span className="flex items-center gap-1">
+                      <Calendar className="w-3 h-3 text-[#186049]" />
+                      {new Date(ev.scheduledStart).toLocaleDateString()} – {new Date(ev.scheduledEnd).toLocaleDateString()}
+                    </span>
+                    <span className="font-semibold text-[#186049]">Bonus: +{ev.bonusPoints} pts</span>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
 
       {/* Campus Leaderboard Section */}
       <div className="rounded-[20px] bg-[#FAF9F5] border border-[#E2DEC2] p-4 shadow-tactile-sm">

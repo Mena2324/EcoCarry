@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useState } from 'react';
 import { useGreenBag } from '../context/GreenBagContext';
 import {
   X,
@@ -10,6 +10,7 @@ import {
   Clock,
   QrCode,
   Tag,
+  AlertTriangle,
 } from 'lucide-react';
 
 export const BagDetailsModal: React.FC = () => {
@@ -19,7 +20,11 @@ export const BagDetailsModal: React.FC = () => {
     setIsScannerOpen,
     setScannerMode,
     setPreselectedBagIdForReturn,
+    reportBagAsMissing,
   } = useGreenBag();
+
+  const [isConfirmingMissing, setIsConfirmingMissing] = useState(false);
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
   if (!selectedBagDetails) return null;
 
@@ -32,11 +37,24 @@ export const BagDetailsModal: React.FC = () => {
     setIsScannerOpen(true);
   };
 
+  const handleReportMissing = async () => {
+    setIsSubmitting(true);
+    const success = await reportBagAsMissing(bag.id, 'Reported lost/missing by student');
+    setIsSubmitting(false);
+    if (success) {
+      setSelectedBagDetails(null);
+      setIsConfirmingMissing(false);
+    }
+  };
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
       <div className="w-full max-w-sm rounded-[24px] bg-[#FAF9F5] border border-[#E2DEC2] p-6 shadow-tactile-fab relative">
         <button
-          onClick={() => setSelectedBagDetails(null)}
+          onClick={() => {
+            setSelectedBagDetails(null);
+            setIsConfirmingMissing(false);
+          }}
           className="absolute top-4 right-4 p-2 rounded-full hover:bg-[#def3e3] text-[#2D3E35] transition-colors"
         >
           <X className="w-5 h-5" />
@@ -54,61 +72,104 @@ export const BagDetailsModal: React.FC = () => {
           <p className="text-xs font-semibold text-[#2D3E35]">{bag.type}</p>
         </div>
 
-        {/* Detailed Stats */}
-        <div className="py-4 space-y-2.5 text-xs text-[#2D3E35]">
-          <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#e3f9e9]/60 border border-[#E2DEC2]/60">
-            <span className="flex items-center gap-1.5 font-medium">
-              <Sparkles className="w-3.5 h-3.5 text-[#4A943E]" /> Return Policy
-            </span>
-            <span className="font-extrabold text-[#186049]">Keep as long as needed • No 7-day limit</span>
-          </div>
+        {/* Confirmation Screen for Reporting Missing */}
+        {isConfirmingMissing ? (
+          <div className="py-4 space-y-3">
+            <div className="p-3.5 rounded-xl bg-[#fff3e0] border border-[#D98327]/40 text-[#14261C]">
+              <div className="flex items-center gap-2 text-[#D98327] font-bold text-xs mb-1">
+                <AlertTriangle className="w-4 h-4 shrink-0" />
+                <span>Report Bag as Missing</span>
+              </div>
+              <p className="text-[11px] text-[#2D3E35] leading-relaxed">
+                If this bag was misplaced or lost, confirming will unlink it from your account and mark
+                bag <strong>#{bag.bagNumber}</strong> as missing in university inventory. It cannot be used
+                or borrowed again until recovered.
+              </p>
+            </div>
 
-          <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#FAF9F5] border border-[#E2DEC2]">
-            <span className="flex items-center gap-1.5 font-medium">
-              <MapPin className="w-3.5 h-3.5 text-[#186049]" /> Origin Station
-            </span>
-            <span className="font-bold text-[#14261C] text-right truncate max-w-[160px]">
-              {bag.borrowedStationName}
-            </span>
+            <div className="space-y-2 pt-1">
+              <button
+                onClick={handleReportMissing}
+                disabled={isSubmitting}
+                className="w-full py-3 rounded-full bg-[#D98327] hover:bg-[#b86b1b] text-white text-xs font-bold transition-all shadow-sm flex items-center justify-center gap-1.5"
+              >
+                {isSubmitting ? 'Reporting...' : 'Confirm: Mark as Missing'}
+              </button>
+              <button
+                onClick={() => setIsConfirmingMissing(false)}
+                className="w-full py-2.5 rounded-full bg-white border border-[#E2DEC2] text-[#2D3E35] text-xs font-semibold hover:bg-[#FAF9F5]"
+              >
+                Cancel
+              </button>
+            </div>
           </div>
+        ) : (
+          <>
+            {/* Detailed Stats */}
+            <div className="py-4 space-y-2.5 text-xs text-[#2D3E35]">
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#e3f9e9]/60 border border-[#E2DEC2]/60">
+                <span className="flex items-center gap-1.5 font-medium">
+                  <Sparkles className="w-3.5 h-3.5 text-[#4A943E]" /> Return Policy
+                </span>
+                <span className="font-extrabold text-[#186049]">Keep as long as needed</span>
+              </div>
 
-          <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#FAF9F5] border border-[#E2DEC2]">
-            <span className="flex items-center gap-1.5 font-medium">
-              <Clock className="w-3.5 h-3.5 text-[#707974]" /> Borrowed On
-            </span>
-            <span className="font-bold text-[#14261C]">{bag.borrowedAt}</span>
-          </div>
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#FAF9F5] border border-[#E2DEC2]">
+                <span className="flex items-center gap-1.5 font-medium">
+                  <MapPin className="w-3.5 h-3.5 text-[#186049]" /> Origin Station
+                </span>
+                <span className="font-bold text-[#14261C] text-right truncate max-w-[160px]">
+                  {bag.borrowedStationName}
+                </span>
+              </div>
 
-          <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#FAF9F5] border border-[#E2DEC2]">
-            <span className="flex items-center gap-1.5 font-medium">
-              <ShieldCheck className="w-3.5 h-3.5 text-[#4A943E]" /> UV-C Sanitization
-            </span>
-            <span className="font-bold text-[#186049]">{bag.washCount} cycles certified</span>
-          </div>
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#FAF9F5] border border-[#E2DEC2]">
+                <span className="flex items-center gap-1.5 font-medium">
+                  <Clock className="w-3.5 h-3.5 text-[#707974]" /> Borrowed On
+                </span>
+                <span className="font-bold text-[#14261C]">{bag.borrowedAt}</span>
+              </div>
 
-          <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#ECE8AF] border border-[#E2DEC2]">
-            <span className="flex items-center gap-1.5 font-medium text-[#186049]">
-              <Sparkles className="w-3.5 h-3.5 text-[#D98327]" /> Single-Use Offset
-            </span>
-            <span className="font-extrabold text-[#186049]">+{bag.co2SavedGrams}g CO₂ avoided</span>
-          </div>
-        </div>
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#FAF9F5] border border-[#E2DEC2]">
+                <span className="flex items-center gap-1.5 font-medium">
+                  <ShieldCheck className="w-3.5 h-3.5 text-[#4A943E]" /> UV-C Sanitization
+                </span>
+                <span className="font-bold text-[#186049]">{bag.washCount} cycles certified</span>
+              </div>
 
-        {/* Buttons */}
-        <div className="pt-2 space-y-2">
-          <button
-            onClick={handleReturnFromDetails}
-            className="w-full py-3.5 rounded-full bg-[#186049] hover:bg-[#004734] text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-tactile-sm transition-all"
-          >
-            <RotateCcw className="w-4 h-4" /> Drop-off / Return Now
-          </button>
-          <button
-            onClick={() => setSelectedBagDetails(null)}
-            className="w-full py-2.5 rounded-full bg-[#FAF9F5] hover:bg-[#def3e3] text-[#2D3E35] border border-[#E2DEC2] text-xs font-semibold transition-all"
-          >
-            Keep Carrying
-          </button>
-        </div>
+              <div className="flex items-center justify-between p-2.5 rounded-xl bg-[#ECE8AF] border border-[#E2DEC2]">
+                <span className="flex items-center gap-1.5 font-medium text-[#186049]">
+                  <Sparkles className="w-3.5 h-3.5 text-[#D98327]" /> Single-Use Offset
+                </span>
+                <span className="font-extrabold text-[#186049]">+{bag.co2SavedGrams}g CO₂ avoided</span>
+              </div>
+            </div>
+
+            {/* Buttons */}
+            <div className="pt-2 space-y-2">
+              <button
+                onClick={handleReturnFromDetails}
+                className="w-full py-3.5 rounded-full bg-[#186049] hover:bg-[#004734] text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-tactile-sm transition-all"
+              >
+                <RotateCcw className="w-4 h-4" /> Drop-off / Return Now
+              </button>
+
+              <button
+                onClick={() => setIsConfirmingMissing(true)}
+                className="w-full py-2.5 rounded-full bg-[#FAF9F5] hover:bg-[#fff3e0] text-[#D98327] border border-[#E2DEC2] text-xs font-bold transition-all flex items-center justify-center gap-1"
+              >
+                <AlertTriangle className="w-3.5 h-3.5" /> Report as Missing
+              </button>
+
+              <button
+                onClick={() => setSelectedBagDetails(null)}
+                className="w-full py-2 rounded-full text-[#707974] hover:text-[#14261C] text-xs font-semibold transition-all"
+              >
+                Keep Carrying
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );

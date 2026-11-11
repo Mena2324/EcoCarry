@@ -13,6 +13,9 @@ import {
   Sparkles,
   ShieldCheck,
   TrendingUp,
+  Megaphone,
+  Zap,
+  AlertTriangle,
 } from 'lucide-react';
 
 export const HomeView: React.FC = () => {
@@ -22,6 +25,7 @@ export const HomeView: React.FC = () => {
     activeBags,
     stampSlots,
     activities,
+    activeEvents,
     setIsScannerOpen,
     setScannerMode,
     setPreselectedBagIdForReturn,
@@ -60,6 +64,46 @@ export const HomeView: React.FC = () => {
           <span>{user.activeStreak} Day Streak</span>
         </div>
       </div>
+
+      {/* Active Campus Event / Campaign Banner (shown when event is live or scheduled now) */}
+      {activeEvents.length > 0 && (
+        <div className="p-4 rounded-[22px] bg-gradient-to-r from-[#186049] to-[#004734] text-white shadow-tactile-md relative overflow-hidden border border-[#4A943E]/40 animate-fade-in">
+          <div className="absolute right-0 top-0 translate-x-4 -translate-y-4 w-32 h-32 bg-[#4A943E]/20 rounded-full blur-2xl pointer-events-none" />
+          
+          <div className="relative z-10 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div className="flex-1">
+              <div className="flex items-center gap-2 mb-1.5 flex-wrap">
+                <span className="inline-flex items-center gap-1 text-[10px] font-extrabold uppercase px-2 py-0.5 rounded-full bg-[#def3e3] text-[#186049]">
+                  <span className="w-1.5 h-1.5 rounded-full bg-[#4A943E] animate-pulse" />
+                  CAMPUS EVENT ACTIVE
+                </span>
+                <span className="text-[10px] font-extrabold px-2 py-0.5 rounded-full bg-[#D98327] text-white shadow-sm">
+                  {activeEvents[0].badgeText}
+                </span>
+                {activeEvents[0].multiplier > 1 && (
+                  <span className="text-[10px] font-bold text-[#acf1d3] flex items-center gap-0.5">
+                    <Zap className="w-3 h-3 text-[#D98327] fill-[#D98327]" />
+                    {activeEvents[0].multiplier}x Points
+                  </span>
+                )}
+              </div>
+              <h3 className="text-base font-extrabold text-white tracking-tight">
+                {activeEvents[0].title}
+              </h3>
+              <p className="text-xs text-[#def3e3]/90 mt-1 leading-relaxed">
+                {activeEvents[0].description}
+              </p>
+            </div>
+
+            <button
+              onClick={handleBorrowDirect}
+              className="px-4 py-2 rounded-full bg-[#ECE8AF] hover:bg-white text-[#186049] text-xs font-bold transition-all shadow-tactile-sm shrink-0 self-start sm:self-center"
+            >
+              Scan & Join Event
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Hero Metric & Impact Card (Soft Kraft Cream #ECE8AF with 20px radius) */}
       <div className="relative overflow-hidden rounded-[20px] bg-[#ECE8AF] border border-[#E2DEC2] p-5 shadow-tactile-md">
@@ -210,13 +254,21 @@ export const HomeView: React.FC = () => {
                     </div>
                   </div>
 
-                  {/* Action Button: Return Bag */}
+                  {/* Action Buttons: Return Bag or Report Missing */}
                   <div className="mt-3.5 flex items-center gap-2">
                     <button
                       onClick={() => handleReturnDirect(bag.id)}
-                      className="w-full py-2.5 px-4 rounded-full bg-[#186049] hover:bg-[#004734] text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-tactile-sm active:scale-[0.99] transition-all"
+                      className="flex-1 py-2.5 px-4 rounded-full bg-[#186049] hover:bg-[#004734] text-white text-xs font-bold flex items-center justify-center gap-1.5 shadow-tactile-sm active:scale-[0.99] transition-all"
                     >
                       <RotateCcw className="w-3.5 h-3.5" /> Return Bag & Collect Stamp
+                    </button>
+                    <button
+                      onClick={() => setSelectedBagDetails(bag)}
+                      className="py-2.5 px-3 rounded-full bg-[#FAF9F5] hover:bg-[#fff3e0] text-[#D98327] border border-[#E2DEC2] text-xs font-bold flex items-center justify-center gap-1 transition-colors"
+                      title="Report Missing"
+                    >
+                      <AlertTriangle className="w-3.5 h-3.5" />
+                      <span className="hidden sm:inline">Report Missing</span>
                     </button>
                   </div>
                 </div>

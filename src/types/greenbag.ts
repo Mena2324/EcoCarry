@@ -88,7 +88,7 @@ export interface GlobalBag {
   id: string;
   bagNumber: string;
   type: 'Heavy Canvas Tote' | 'Thermal Meal Pouch' | 'Compact Daily Sling';
-  status: 'available' | 'borrowed' | 'maintenance';
+  status: 'available' | 'borrowed' | 'maintenance' | 'missing';
   currentBorrowerId: string | null;
   currentBorrowerName: string | null;
   borrowedStationId: string | null;
@@ -122,4 +122,21 @@ export interface ActivityLog {
   time: string;
   type: 'borrow' | 'return' | 'points';
 }
+
+export interface CampusEcoEvent {
+  id: string;
+  title: string;
+  description: string;
+  badgeText: string;
+  location: string;
+  bonusPoints: number;
+  multiplier: number;
+  status: 'draft' | 'scheduled' | 'active' | 'ended';
+  scheduledStart: string; // ISO format or date string
+  scheduledEnd: string;   // ISO format or date string
+  isPublished: boolean;
+  createdAt: string;
+  createdBy: string;
+}
+
 

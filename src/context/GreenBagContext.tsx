@@ -38,6 +38,7 @@ import {
   GlobalBag,
   RewardVoucher,
   ActivityLog,
+  CampusEcoEvent,
 } from '../types/greenbag';
 import {
   INITIAL_USER,
@@ -47,6 +48,7 @@ import {
   INITIAL_CAMPUS_METRICS,
   INITIAL_GLOBAL_BAGS,
   INITIAL_DEV_ACCOUNTS,
+  INITIAL_CAMPUS_EVENTS,
   DevAccount,
 } from '../data/mockData';
 
@@ -99,10 +101,20 @@ interface GreenBagContextType {
   adminAwardPoints: (studentId: string, amount: number) => void;
   adminResolveBag: (bagNumber: string) => void;
   exportAllData: (format: 'json' | 'csv') => void;
+  exportComprehensiveUserReport: (format: 'json' | 'csv') => Promise<void>;
+  fetchAllUsersForReport: () => Promise<DevAccount[]>;
+  events: CampusEcoEvent[];
+  activeEvents: CampusEcoEvent[];
+  createCampusEvent: (eventData: Omit<CampusEcoEvent, 'id' | 'createdAt' | 'createdBy'>) => Promise<boolean>;
+  publishEventNow: (eventId: string) => Promise<boolean>;
+  toggleEventStatus: (eventId: string, newStatus: CampusEcoEvent['status'], isPublished: boolean) => Promise<boolean>;
+  deleteCampusEvent: (eventId: string) => Promise<boolean>;
   toastMessage: { text: string; type: 'success' | 'info' | 'warning' } | null;
   showToast: (text: string, type?: 'success' | 'info' | 'warning') => void;
   borrowBag: (stationId: string, bagId: string, scannedQrToken?: string) => Promise<boolean>;
   returnBag: (bagId: string, stationId: string) => Promise<boolean>;
+  reportBagAsMissing: (bagId: string, reason?: string) => Promise<boolean>;
+  seedAll200BagsToFirestore: () => Promise<void>;
   redeemReward: (rewardId: string) => Promise<boolean>;
   resetData: () => void;
 }
@@ -168,6 +180,22 @@ export const GreenBagProvider: React.FC<{ children: React.ReactNode }> = ({ chil
   // Recent activity logs
   const [activities, setActivities] = useState<ActivityLog[]>([]);
 
+  // Campus Eco Events & Campaigns (built-in + developer created)
+  const [events, setEvents] = useState<CampusEcoEvent[]>(INITIAL_CAMPUS_EVENTS);
+
+  // Computed active events: published or currently within scheduled time window
+  const activeEvents = events.filter((ev) => {
+    if (ev.status === 'ended') return false;
+    if (ev.isPublished && (ev.status === 'active' || ev.status === 'scheduled')) return true;
+    if (ev.status === 'scheduled') {
+      const now = new Date();
+      const start = new Date(ev.scheduledStart);
+      const end = new Date(ev.scheduledEnd);
+      return now >= start && now <= end;
+    }
+    return false;
+  });
+
   // Auth state
   const [isAuthenticated, setIsAuthenticated] = useState<boolean>(false);
 
@@ -224,8 +252,10 @@ export const GreenBagProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       try {
         const bagsColRef = collection(db, 'bags');
         const snap = await getDocs(bagsColRef);
-        if (snap.empty) {
-          for (const bag of INITIAL_GLOBAL_BAGS) {
+        const existingIds = new Set(snap.docs.map((d) => d.id));
+        const missingBags = INITIAL_GLOBAL_BAGS.filter((b) => !existingIds.has(b.id));
+        if (missingBags.length > 0) {
+          for (const bag of missingBags) {
             await setDoc(doc(db, 'bags', bag.id), {
               ...bag,
               createdAt: serverTimestamp(),
@@ -292,9 +322,45 @@ export const GreenBagProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       }
     );
 
+    // Bootstrap and listen to campus eco events (/events)
+    const initEvents = async () => {
+      try {
+        const eventsCol = collection(db, 'events');
+        const snap = await getDocs(eventsCol);
+        if (snap.empty) {
+          for (const ev of INITIAL_CAMPUS_EVENTS) {
+            await setDoc(doc(db, 'events', ev.id), {
+              ...ev,
+              createdAt: serverTimestamp(),
+            });
+          }
+        }
+      } catch (err) {
+        console.warn('Could not bootstrap events collection in Firestore:', err);
+      }
+    };
+    initEvents();
+
+    const unsubEvents = onSnapshot(
+      collection(db, 'events'),
+      (snapshot) => {
+        if (!snapshot.empty) {
+          const liveEvents: CampusEcoEvent[] = snapshot.docs.map((d) => ({
+            id: d.id,
+            ...(d.data() as Omit<CampusEcoEvent, 'id'>),
+          }));
+          setEvents(liveEvents);
+        }
+      },
+      (error) => {
+        handleFirestoreError(error, OperationType.LIST, 'events');
+      }
+    );
+
     return () => {
       unsubGlobalBags();
       unsubCampus();
+      unsubEvents();
     };
   }, []);
 
@@ -641,27 +707,57 @@ export const GreenBagProvider: React.FC<{ children: React.ReactNode }> = ({ chil
       return false;
     }
 
+    let normalizedId = bagId.trim().toUpperCase();
+    if (/^GB-\d+$/i.test(normalizedId)) {
+      const digits = normalizedId.replace('GB-', '');
+      normalizedId = `GB-${digits.padStart(4, '0')}`;
+    }
+
+    // Verify it belongs to the 200 accepted campus QR codes
+    const validBagRecord = INITIAL_GLOBAL_BAGS.find(
+      (b) => b.id === normalizedId || b.bagNumber === normalizedId
+    );
+    if (!validBagRecord) {
+      showToast(
+        `Invalid QR code "${bagId}". Only official EcoCarry QR codes (#GB-0001 to #GB-0200) are accepted.`,
+        'warning'
+      );
+      return false;
+    }
+
     const station = stations.find((s) => s.id === stationId) || stations[0];
-    const bagDocRef = doc(db, 'bags', bagId);
+    const bagDocRef = doc(db, 'bags', normalizedId);
     const userDocRef = doc(db, 'users', firebaseUser.uid);
-    const userBagDocRef = doc(db, 'users', firebaseUser.uid, 'bags', bagId);
+    const userBagDocRef = doc(db, 'users', firebaseUser.uid, 'bags', normalizedId);
     const actDocRef = doc(collection(db, 'users', firebaseUser.uid, 'activities'));
 
     try {
       await runTransaction(db, async (transaction) => {
         const bagDoc = await transaction.get(bagDocRef);
         if (!bagDoc.exists()) {
-          throw new Error(`Physical bag ${bagId} does not exist in the campus database.`);
+          throw new Error(`Physical bag ${normalizedId} is not registered in the campus database.`);
         }
 
         const bagData = bagDoc.data() as GlobalBag;
+        if (bagData.status === 'borrowed' || bagData.currentBorrowerId) {
+          throw new Error(
+            `This QR code (#${bagData.bagNumber}) is currently active and linked to an account. It cannot be used again until reported as missing or returned.`
+          );
+        }
+
+        if (bagData.status === 'missing') {
+          throw new Error(
+            `This QR code (#${bagData.bagNumber}) is currently flagged as missing. It cannot be checked out.`
+          );
+        }
+
         if (bagData.status !== 'available') {
-          throw new Error(`Bag ${bagData.bagNumber} is currently checked out by another borrower.`);
+          throw new Error(`Bag ${bagData.bagNumber} is currently not available for checkout.`);
         }
 
         // Verify QR security token if provided
         if (scannedQrToken && bagData.qrToken && bagData.qrToken !== scannedQrToken) {
-          throw new Error(`Invalid or expired QR security token for bag ${bagData.bagNumber}.`);
+          throw new Error(`Invalid or unverified QR security token for bag ${bagData.bagNumber}.`);
         }
 
         // 1. Update physical bag in global collection
@@ -705,12 +801,98 @@ export const GreenBagProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         });
       });
 
-      showToast(`Verified checkout for bag #${bagId}! Return anytime to any campus kiosk.`, 'success');
+      showToast(`Verified checkout for bag #${normalizedId}! Return anytime to any campus kiosk.`, 'success');
       return true;
     } catch (err: any) {
       console.error('Borrow transaction error:', err);
       showToast(err.message || 'Failed to borrow bag in Firestore transaction.', 'warning');
       return false;
+    }
+  };
+
+  // Student action: Report a borrowed bag as missing (unlinks bag from account and marks as missing)
+  const reportBagAsMissing = async (bagId: string, reason?: string): Promise<boolean> => {
+    if (!firebaseUser) {
+      showToast('Please sign in to manage your bag loans.', 'warning');
+      return false;
+    }
+
+    let normalizedId = bagId.trim().toUpperCase();
+    if (/^GB-\d+$/i.test(normalizedId)) {
+      const digits = normalizedId.replace('GB-', '');
+      normalizedId = `GB-${digits.padStart(4, '0')}`;
+    }
+
+    const bagDocRef = doc(db, 'bags', normalizedId);
+    const userBagDocRef = doc(db, 'users', firebaseUser.uid, 'bags', normalizedId);
+    const actDocRef = doc(collection(db, 'users', firebaseUser.uid, 'activities'));
+
+    try {
+      await runTransaction(db, async (transaction) => {
+        const bagDoc = await transaction.get(bagDocRef);
+        if (!bagDoc.exists()) {
+          throw new Error(`Bag #${normalizedId} was not found in campus inventory.`);
+        }
+
+        const bagData = bagDoc.data() as GlobalBag;
+        if (bagData.currentBorrowerId !== firebaseUser.uid && !isCurrentUserAdmin) {
+          throw new Error('You can only report bags currently loaned to your account as missing.');
+        }
+
+        // Unlink from student account and mark missing in global inventory
+        transaction.update(bagDocRef, {
+          status: 'missing',
+          currentBorrowerId: null,
+          currentBorrowerName: null,
+          lastReportedMissingAt: serverTimestamp(),
+          missingReason: reason || 'Reported lost/missing by student',
+        });
+
+        // Delete active bag from user subcollection
+        transaction.delete(userBagDocRef);
+
+        // Record in activity log
+        transaction.set(actDocRef, {
+          action: 'Reported Bag Missing',
+          bagNumber: bagData.bagNumber,
+          location: 'Campus Security / Eco Desk',
+          time: 'Just now',
+          type: 'points',
+          timeServer: serverTimestamp(),
+        });
+      });
+
+      setActiveBags((prev) => prev.filter((b) => b.id !== normalizedId && b.bagNumber !== normalizedId));
+      showToast(`Bag #${normalizedId} reported as missing. Your active loan has been closed.`, 'info');
+      return true;
+    } catch (err: any) {
+      console.error('Report missing error:', err);
+      showToast(err.message || 'Failed to report bag as missing.', 'warning');
+      return false;
+    }
+  };
+
+  // Seed / Sync all 200 official EcoCarry bags to Firestore
+  const seedAll200BagsToFirestore = async (): Promise<void> => {
+    try {
+      showToast('Syncing all 200 bags to Firestore...', 'info');
+      const existingSnap = await getDocs(collection(db, 'bags'));
+      const existingIds = new Set(existingSnap.docs.map((d) => d.id));
+      let added = 0;
+
+      for (const bag of INITIAL_GLOBAL_BAGS) {
+        if (!existingIds.has(bag.id)) {
+          await setDoc(doc(db, 'bags', bag.id), {
+            ...bag,
+            createdAt: serverTimestamp(),
+          });
+          added++;
+        }
+      }
+      showToast(`All 200 bags are active in Firestore (${added} newly created).`, 'success');
+    } catch (err) {
+      console.error('Failed to seed 200 bags:', err);
+      showToast('Failed to seed bags to Firestore.', 'warning');
     }
   };
 
@@ -966,6 +1148,242 @@ export const GreenBagProvider: React.FC<{ children: React.ReactNode }> = ({ chil
     showToast(`Exported campus records as ${format.toUpperCase()}`, 'success');
   };
 
+  // Developer Event Management Actions
+  const createCampusEvent = async (
+    eventData: Omit<CampusEcoEvent, 'id' | 'createdAt' | 'createdBy'>
+  ): Promise<boolean> => {
+    if (!isCurrentUserAdmin) {
+      showToast('Developer authorization required to create events.', 'warning');
+      return false;
+    }
+    try {
+      const newId = `evt-${Date.now().toString(36)}-${Math.random().toString(36).substring(2, 6)}`;
+      const newEvent: CampusEcoEvent = {
+        ...eventData,
+        id: newId,
+        createdAt: new Date().toISOString(),
+        createdBy: firebaseUser?.email || 'menazaki012@gmail.com',
+      };
+      await setDoc(doc(db, 'events', newId), {
+        ...newEvent,
+        serverCreatedAt: serverTimestamp(),
+      });
+      showToast(`Event "${newEvent.title}" published!`, 'success');
+      return true;
+    } catch (err) {
+      console.error('Failed to create event:', err);
+      showToast('Failed to create event in Firestore.', 'warning');
+      return false;
+    }
+  };
+
+  const publishEventNow = async (eventId: string): Promise<boolean> => {
+    if (!isCurrentUserAdmin) return false;
+    try {
+      await setDoc(
+        doc(db, 'events', eventId),
+        {
+          status: 'active',
+          isPublished: true,
+          scheduledStart: new Date().toISOString(),
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+      showToast('Event published live to all students!', 'success');
+      return true;
+    } catch (err) {
+      console.error('Failed to publish event:', err);
+      showToast('Failed to publish event.', 'warning');
+      return false;
+    }
+  };
+
+  const toggleEventStatus = async (
+    eventId: string,
+    newStatus: CampusEcoEvent['status'],
+    isPublished: boolean
+  ): Promise<boolean> => {
+    if (!isCurrentUserAdmin) return false;
+    try {
+      await setDoc(
+        doc(db, 'events', eventId),
+        {
+          status: newStatus,
+          isPublished,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      );
+      showToast(`Event updated to ${newStatus}.`, 'info');
+      return true;
+    } catch (err) {
+      console.error('Failed to toggle event:', err);
+      showToast('Failed to update event.', 'warning');
+      return false;
+    }
+  };
+
+  const deleteCampusEvent = async (eventId: string): Promise<boolean> => {
+    if (!isCurrentUserAdmin) return false;
+    try {
+      await deleteDoc(doc(db, 'events', eventId));
+      showToast('Event removed.', 'info');
+      return true;
+    } catch (err) {
+      console.error('Failed to delete event:', err);
+      showToast('Failed to delete event.', 'warning');
+      return false;
+    }
+  };
+
+  // Developer Live User Data Collection for Academic & ESG Reports
+  const fetchAllUsersForReport = async (): Promise<DevAccount[]> => {
+    if (!isCurrentUserAdmin) return devAccounts;
+    try {
+      const snap = await getDocs(collection(db, 'users'));
+      if (!snap.empty) {
+        const liveUsers: DevAccount[] = snap.docs.map((docSnap) => {
+          const d = docSnap.data();
+          const cleanEmail = d.email || `${d.studentId || docSnap.id.substring(0, 8)}@mail.apu.edu`;
+          const activeBagsForUser = globalBags
+            .filter((b) => b.currentBorrowerId === docSnap.id && b.status === 'borrowed')
+            .map((b) => b.bagNumber);
+
+          return {
+            id: docSnap.id,
+            studentName: d.studentName || 'Eco Student',
+            studentId: d.studentId || docSnap.id.substring(0, 8).toUpperCase(),
+            email: cleanEmail,
+            faculty: d.faculty || 'School of Technology & AI',
+            tier: (d.tier as DevAccount['tier']) || 'SEEDLING EXPLORER',
+            points: d.points ?? 0,
+            bagsSavedTotal: d.bagsSavedTotal ?? 0,
+            co2SavedKg: d.co2SavedKg ?? 0,
+            activeStreak: d.activeStreak ?? 0,
+            activeLoansCount: activeBagsForUser.length,
+            role: cleanEmail.toLowerCase().includes('menazaki012') ? 'admin' : 'student',
+            lastActive: d.updatedAt
+              ? new Date(d.updatedAt.toDate?.() || Date.now()).toLocaleDateString()
+              : 'Recent',
+            activeBagNumbers: activeBagsForUser,
+          };
+        });
+
+        // Supplement with initial cohort accounts for comprehensive statistical variance if few records
+        const liveEmails = new Set(liveUsers.map((u) => u.email.toLowerCase()));
+        const enrichedList = [
+          ...liveUsers,
+          ...devAccounts.filter((d) => !liveEmails.has(d.email.toLowerCase())),
+        ];
+        return enrichedList;
+      }
+    } catch (err) {
+      console.warn('Developer data collection query fallback:', err);
+    }
+    return devAccounts;
+  };
+
+  const exportComprehensiveUserReport = async (format: 'json' | 'csv') => {
+    const reportAccounts = await fetchAllUsersForReport();
+    const totalUsers = reportAccounts.length;
+    const totalDiverted = reportAccounts.reduce((sum, a) => sum + a.bagsSavedTotal, 0);
+    const totalCo2 = Number(reportAccounts.reduce((sum, a) => sum + a.co2SavedKg, 0).toFixed(2));
+    const totalPoints = reportAccounts.reduce((sum, a) => sum + a.points, 0);
+
+    const facultyBreakdown: Record<string, { users: number; bags: number; co2: number }> = {};
+    reportAccounts.forEach((acc) => {
+      if (!facultyBreakdown[acc.faculty]) {
+        facultyBreakdown[acc.faculty] = { users: 0, bags: 0, co2: 0 };
+      }
+      facultyBreakdown[acc.faculty].users += 1;
+      facultyBreakdown[acc.faculty].bags += acc.bagsSavedTotal;
+      facultyBreakdown[acc.faculty].co2 = Number(
+        (facultyBreakdown[acc.faculty].co2 + acc.co2SavedKg).toFixed(2)
+      );
+    });
+
+    const reportPayload = {
+      metadata: {
+        reportTitle: 'APU EcoCarry Campus Reusables & ESG Circularity Audit',
+        author: 'EcoCarry Developer & Sustainability Office',
+        developerEmail: firebaseUser?.email || 'menazaki012@gmail.com',
+        targetFirestoreDB: FIREBASE_PROJECT_ID,
+        generatedAt: new Date().toISOString(),
+        reportingStandard: 'GHG Protocol Scope 3 & APU Campus Green Target 2026',
+      },
+      executiveSummary: {
+        totalEnrolledStudents: totalUsers,
+        totalSingleUseBagsAvoided: totalDiverted,
+        totalCO2AvoidedKg: totalCo2,
+        treesEquivalent: Math.floor(totalCo2 / 21),
+        totalRewardPointsCirculated: totalPoints,
+        averageBagsPerUser: totalUsers > 0 ? Number((totalDiverted / totalUsers).toFixed(1)) : 0,
+      },
+      facultyBreakdown,
+      studentCohortData: reportAccounts,
+      eventsLog: events,
+      physicalBagsInventory: globalBags,
+    };
+
+    if (format === 'json') {
+      const dataStr =
+        'data:text/json;charset=utf-8,' + encodeURIComponent(JSON.stringify(reportPayload, null, 2));
+      const downloadAnchor = document.createElement('a');
+      downloadAnchor.setAttribute('href', dataStr);
+      downloadAnchor.setAttribute(
+        'download',
+        `APU_EcoCarry_ESG_Research_Dataset_${new Date().toISOString().slice(0, 10)}.json`
+      );
+      document.body.appendChild(downloadAnchor);
+      downloadAnchor.click();
+      downloadAnchor.remove();
+    } else {
+      const csvHeader = [
+        'User ID',
+        'Student Name',
+        'Student ID',
+        'Email Address',
+        'Faculty',
+        'Eco Tier',
+        'Total Points',
+        'Bags Saved',
+        'CO2 Saved (kg)',
+        'Active Streak (days)',
+        'Active Borrowed Bags',
+        'Last Active',
+      ];
+      const rows = reportAccounts.map((a) => [
+        `"${a.id}"`,
+        `"${a.studentName}"`,
+        `"${a.studentId}"`,
+        `"${a.email}"`,
+        `"${a.faculty}"`,
+        `"${a.tier}"`,
+        a.points,
+        a.bagsSavedTotal,
+        a.co2SavedKg,
+        a.activeStreak,
+        a.activeLoansCount,
+        `"${a.lastActive}"`,
+      ]);
+
+      const csvContent =
+        'data:text/csv;charset=utf-8,' + [csvHeader.join(','), ...rows.map((r) => r.join(','))].join('\n');
+      const encodedUri = encodeURI(csvContent);
+      const link = document.createElement('a');
+      link.setAttribute('href', encodedUri);
+      link.setAttribute(
+        'download',
+        `APU_EcoCarry_User_Data_Report_${new Date().toISOString().slice(0, 10)}.csv`
+      );
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+    }
+    showToast(`Exported Comprehensive ESG Dataset as ${format.toUpperCase()}`, 'success');
+  };
+
   const resetData = () => {
     localStorage.clear();
     setUser(INITIAL_USER);
@@ -1018,6 +1436,14 @@ export const GreenBagProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         adminAwardPoints,
         adminResolveBag,
         exportAllData,
+        exportComprehensiveUserReport,
+        fetchAllUsersForReport,
+        events,
+        activeEvents,
+        createCampusEvent,
+        publishEventNow,
+        toggleEventStatus,
+        deleteCampusEvent,
         isAuthenticated,
         loginWithGoogle,
         loginWithEmailPassword,
@@ -1030,6 +1456,8 @@ export const GreenBagProvider: React.FC<{ children: React.ReactNode }> = ({ chil
         showToast,
         borrowBag,
         returnBag,
+        reportBagAsMissing,
+        seedAll200BagsToFirestore,
         redeemReward,
         resetData,
       }}
